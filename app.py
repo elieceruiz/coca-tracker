@@ -3,132 +3,97 @@ from datetime import datetime
 from pymongo import MongoClient
 import pytz
 import pandas as pd
-import requests
 from dateutil.relativedelta import relativedelta
-from streamlit_autorefresh import st_autorefresh
+import time
 
-# === CONFIG ===
-st.set_page_config(page_title="🥤 coca-tracker", layout="centered")
+# === CONFIGURACIÓN GENERAL ===
+st.set_page_config(page_title="Coca Tracker", layout="centered")
 colombia = pytz.timezone("America/Bogota")
 
-# === CONEXIÓN A BD ===
+# === CONEXIÓN A MONGODB ===
 client = MongoClient(st.secrets["mongo_uri"])
-db = client["bucle_coca"]
+db = client["coca_tracker"]
 coleccion_eventos = db["eventos"]
-coleccion_ingresos = db["ingresos"]
+coleccion_metadata = db["app_metadata"]
 
-# === SELECTOR DE VISTA ===
-opciones = {
-    "🥤 Registrar consumo": "consumo",
-    "📒 Historial completo": "historial"
-}
-
-st.title("🥤 coca-tracker")
-seleccion = st.selectbox("¿Qué querés hacer?", list(opciones.keys()))
-opcion = opciones[seleccion]
-
-# === FUNCIONES ===
-def obtener_ip():
-    try:
-        r = requests.get("https://api64.ipify.org?format=json", timeout=5)
-        return r.json()["ip"]
-    except:
-        return "IP no disponible"
-
-def registrar_ingreso(ip):
-    existe = coleccion_ingresos.find_one({"ip": ip})
-    if not existe:
-        coleccion_ingresos.insert_one({
-            "ip": ip,
-            "primer_ingreso": datetime.now(colombia)
+# === REGISTRAR PRIMER INGRESO SI NO EXISTE ===
+def registrar_primer_ingreso_si_no_existe():
+    if not coleccion_metadata.find_one({"clave": "primer_ingreso"}):
+        coleccion_metadata.insert_one({
+            "clave": "primer_ingreso",
+            "fecha": datetime.now(colombia)
         })
 
-def obtener_ingreso(ip):
-    return coleccion_ingresos.find_one({"ip": ip})
+# === OBTENER PRIMER INGRESO GENERAL ===
+def obtener_primer_ingreso():
+    doc = coleccion_metadata.find_one({"clave": "primer_ingreso"})
+    return doc["fecha"].astimezone(colombia) if doc else None
 
+# === OBTENER ÚLTIMO CONSUMO ===
 def obtener_ultimo_consumo():
-    return coleccion_eventos.find_one(sort=[("timestamp", -1)])
+    doc = coleccion_eventos.find_one(sort=[("timestamp", -1)])
+    return doc["timestamp"].astimezone(colombia) if doc else None
 
-def calcular_duracion(inicio, fin):
-    delta = relativedelta(fin, inicio)
-    return f"{delta.years}a {delta.months}m {delta.days}d {delta.hours}h {delta.minutes}m {delta.seconds}s"
-
-# === INICIO DE SESIÓN ===
-ip = obtener_ip()
-registrar_ingreso(ip)
-ingreso = obtener_ingreso(ip)
-if not ingreso:
-    st.error("No se pudo registrar tu ingreso.")
-    st.stop()
-
-# === VISTA: REGISTRAR CONSUMO ===
-if opcion == "consumo":
-    st.header("📍 Registrar consumo de Coca-Cola")
-
-    st.markdown(f"**👤 Tu IP registrada:** `{ip}`")
-    st.markdown(f"**🕓 Primer ingreso:** {ingreso['primer_ingreso'].astimezone(colombia).strftime('%Y-%m-%d %H:%M:%S')}")
-
-    # Determinar desde dónde contar
-    ultimo_consumo = obtener_ultimo_consumo()
-    if ultimo_consumo and ultimo_consumo["timestamp"] > ingreso["primer_ingreso"]:
-        inicio_conteo = ultimo_consumo["timestamp"].astimezone(colombia)
-        origen = "último consumo"
-    else:
-        inicio_conteo = ingreso["primer_ingreso"].astimezone(colombia)
-        origen = "primer ingreso"
-
-    st.markdown(f"**⏳ El conteo parte desde tu {origen}:** {inicio_conteo.strftime('%Y-%m-%d %H:%M:%S')}")
-
-    # Cronómetro en tiempo real
-    st_autorefresh(interval=1000, key="auto_refresh")
+# === REGISTRAR CONSUMO ===
+def registrar_consumo():
     ahora = datetime.now(colombia)
-    duracion = calcular_duracion(inicio_conteo, ahora)
-    st.metric("🕒 Tiempo transcurrido", duracion)
+    coleccion_eventos.insert_one({"timestamp": ahora})
+    st.success(f"🍷 Consumo registrado a las {ahora.strftime('%H:%M:%S')}")
 
-    # Botón para registrar consumo
-    if st.button("Registrar consumo de Coca-Cola 🟥"):
-        coleccion_eventos.insert_one({"timestamp": datetime.now(colombia)})
-        st.success("✅ Consumo registrado correctamente")
+# === MOSTRAR CRONÓMETRO ===
+def mostrar_cronometro():
+    st.markdown("### ⏱️ Tiempo sin consumir")
+
+    referencia = obtener_ultimo_consumo() or obtener_primer_ingreso()
+
+    if referencia:
+        ahora = datetime.now(colombia)
+        delta = ahora - referencia
+        detalle = relativedelta(ahora, referencia)
+        minutos = int(delta.total_seconds() // 60)
+        tiempo = f"{detalle.years}a {detalle.months}m {detalle.days}d {detalle.hours}h {detalle.minutes}m {detalle.seconds}s"
+
+        st.metric("Duración", f"{minutos:,} min", tiempo)
+        st.caption(f"🔴 Desde: {referencia.strftime('%Y-%m-%d %H:%M:%S')}")
+        time.sleep(1)
         st.rerun()
-
-# === VISTA: HISTORIAL COMPLETO ===
-elif opcion == "historial":
-    st.header("📒 Historial completo")
-
-    # Ingresos (orden descendente)
-    ingresos = list(coleccion_ingresos.find().sort("primer_ingreso", -1))
-    if ingresos:
-        datos = []
-        for i, doc in enumerate(ingresos):
-            datos.append({
-                "#": i + 1,
-                "IP": doc["ip"],
-                "Fecha y hora": doc["primer_ingreso"].astimezone(colombia).strftime("%Y-%m-%d %H:%M:%S")
-            })
-        st.subheader("📋 Ingresos registrados")
-        st.dataframe(pd.DataFrame(datos), use_container_width=True, hide_index=True)
     else:
-        st.info("No hay ingresos registrados aún.")
+        st.metric("Duración", "0 min")
+        st.caption("0a 0m 0d 0h 0m 0s")
 
-    # Consumos (orden descendente)
+# === HISTORIAL DE CONSUMOS ===
+def obtener_historial():
     eventos = list(coleccion_eventos.find().sort("timestamp", -1))
-    if eventos:
-        filas = []
-        for i in range(len(eventos)):
-            actual = eventos[i]["timestamp"].astimezone(colombia)
-            anterior = eventos[i+1]["timestamp"].astimezone(colombia) if i+1 < len(eventos) else None
-            if anterior:
-                delta = relativedelta(actual, anterior)
-                duracion = f"{delta.years}a {delta.months}m {delta.days}d {delta.hours}h {delta.minutes}m"
-            else:
-                duracion = "-"
-            filas.append({
-                "#": i + 1,
-                "Fecha": actual.strftime("%Y-%m-%d"),
-                "Hora": actual.strftime("%H:%M"),
-                "Desde el anterior": duracion
-            })
-        st.subheader("📋 Consumos registrados")
-        st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True)
-    else:
-        st.info("No hay consumos registrados aún.")
+    filas = []
+    total = len(eventos)
+    for i, e in enumerate(eventos):
+        fecha = e["timestamp"].astimezone(colombia)
+        anterior = eventos[i + 1]["timestamp"].astimezone(colombia) if i + 1 < len(eventos) else None
+        diferencia = ""
+        if anterior:
+            detalle = relativedelta(fecha, anterior)
+            diferencia = f"{detalle.years}a {detalle.months}m {detalle.days}d {detalle.hours}h {detalle.minutes}m"
+        filas.append({
+            "N°": total - i,
+            "Fecha": fecha.strftime("%Y-%m-%d"),
+            "Hora": fecha.strftime("%H:%M"),
+            "Duración sin consumir": diferencia
+        })
+    return pd.DataFrame(filas)
+
+# === INICIO DE APP ===
+registrar_primer_ingreso_si_no_existe()
+
+st.title("🥤 coca-tracker")
+
+# Botón para registrar consumo
+if st.button("☠️ Registrar consumo"):
+    registrar_consumo()
+
+# Cronómetro
+mostrar_cronometro()
+
+# Historial desplegable
+with st.expander("📑 Historial de consumos"):
+    df = obtener_historial()
+    st.dataframe(df, use_container_width=True, hide_index=True)

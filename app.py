@@ -1,99 +1,98 @@
 import streamlit as st
-from datetime import datetime
 from pymongo import MongoClient
+from datetime import datetime
 import pytz
-import pandas as pd
-from dateutil.relativedelta import relativedelta
 import time
+import pandas as pd
+import requests
 
-# === CONFIGURACIÓN GENERAL ===
-st.set_page_config(page_title="Coca Tracker", layout="centered")
-colombia = pytz.timezone("America/Bogota")
+# Configuración
+st.set_page_config(page_title="coca-tracker", layout="centered")
+st.title("🥤 coca-\ntracker")
 
-# === CONEXIÓN A MONGODB ===
+# Zona horaria
+tz = pytz.timezone("America/Bogota")
+
+# MongoDB
 client = MongoClient(st.secrets["mongo_uri"])
 db = client["coca_tracker"]
-coleccion_eventos = db["eventos"]
-coleccion_metadata = db["app_metadata"]
+col_ingresos = db["ingresos"]
+col_consumos = db["consumos"]
 
-# === REGISTRAR PRIMER INGRESO SI NO EXISTE ===
-def registrar_primer_ingreso_si_no_existe():
-    if not coleccion_metadata.find_one({"clave": "primer_ingreso"}):
-        coleccion_metadata.insert_one({
-            "clave": "primer_ingreso",
-            "fecha": datetime.now(colombia)
+# Obtener IP del visitante
+def obtener_ip():
+    try:
+        ip = requests.get('https://api.ipify.org').text
+    except:
+        ip = "0.0.0.0"
+    return ip
+
+ip_actual = obtener_ip()
+
+# Registrar IP si no está
+existe = col_ingresos.find_one({"ip": ip_actual})
+if not existe:
+    col_ingresos.insert_one({
+        "ip": ip_actual,
+        "fecha": datetime.now(tz)
+    })
+
+# Determinar punto de inicio del conteo
+ultimo_consumo = col_consumos.find_one({"ip": ip_actual}, sort=[("fecha", -1)])
+primer_ingreso = col_ingresos.find_one({"ip": ip_actual}, sort=[("fecha", 1)])
+
+if ultimo_consumo:
+    inicio = ultimo_consumo["fecha"]
+else:
+    inicio = primer_ingreso["fecha"]
+
+# Mostrar tiempo transcurrido desde `inicio`
+st.markdown("### ⏱️ Tiempo sin consumir")
+
+duracion_segundos = int((datetime.now(tz) - inicio).total_seconds())
+while True:
+    dias = duracion_segundos // 86400
+    horas = (duracion_segundos % 86400) // 3600
+    minutos = (duracion_segundos % 3600) // 60
+    segundos = duracion_segundos % 60
+    st.metric("Duración", f"{minutos} min")
+    st.success(f"🟢 + {dias}a {horas}h {minutos}m {segundos}s")
+    st.error(f"🔴 Desde: {inicio.strftime('%Y-%m-%d %H:%M:%S')}")
+    time.sleep(1)
+    duracion_segundos += 1
+    st.rerun()
+
+# Registrar consumo
+with st.expander("☠️ Registrar consumo"):
+    if st.button("Registrar consumo"):
+        col_consumos.insert_one({
+            "ip": ip_actual,
+            "fecha": datetime.now(tz)
         })
-
-# === OBTENER PRIMER INGRESO GENERAL ===
-def obtener_primer_ingreso():
-    doc = coleccion_metadata.find_one({"clave": "primer_ingreso"})
-    return doc["fecha"].astimezone(colombia) if doc else None
-
-# === OBTENER ÚLTIMO CONSUMO ===
-def obtener_ultimo_consumo():
-    doc = coleccion_eventos.find_one(sort=[("timestamp", -1)])
-    return doc["timestamp"].astimezone(colombia) if doc else None
-
-# === REGISTRAR CONSUMO ===
-def registrar_consumo():
-    ahora = datetime.now(colombia)
-    coleccion_eventos.insert_one({"timestamp": ahora})
-    st.success(f"🍷 Consumo registrado a las {ahora.strftime('%H:%M:%S')}")
-
-# === MOSTRAR CRONÓMETRO ===
-def mostrar_cronometro():
-    st.markdown("### ⏱️ Tiempo sin consumir")
-
-    referencia = obtener_ultimo_consumo() or obtener_primer_ingreso()
-
-    if referencia:
-        ahora = datetime.now(colombia)
-        delta = ahora - referencia
-        detalle = relativedelta(ahora, referencia)
-        minutos = int(delta.total_seconds() // 60)
-        tiempo = f"{detalle.years}a {detalle.months}m {detalle.days}d {detalle.hours}h {detalle.minutes}m {detalle.seconds}s"
-
-        st.metric("Duración", f"{minutos:,} min", tiempo)
-        st.caption(f"🔴 Desde: {referencia.strftime('%Y-%m-%d %H:%M:%S')}")
+        st.success("✅ Consumo registrado. Reiniciando conteo...")
         time.sleep(1)
         st.rerun()
-    else:
-        st.metric("Duración", "0 min")
-        st.caption("0a 0m 0d 0h 0m 0s")
 
-# === HISTORIAL DE CONSUMOS ===
-def obtener_historial():
-    eventos = list(coleccion_eventos.find().sort("timestamp", -1))
-    filas = []
-    total = len(eventos)
-    for i, e in enumerate(eventos):
-        fecha = e["timestamp"].astimezone(colombia)
-        anterior = eventos[i + 1]["timestamp"].astimezone(colombia) if i + 1 < len(eventos) else None
-        diferencia = ""
-        if anterior:
-            detalle = relativedelta(fecha, anterior)
-            diferencia = f"{detalle.years}a {detalle.months}m {detalle.days}d {detalle.hours}h {detalle.minutes}m"
-        filas.append({
-            "N°": total - i,
-            "Fecha": fecha.strftime("%Y-%m-%d"),
-            "Hora": fecha.strftime("%H:%M"),
-            "Duración sin consumir": diferencia
-        })
-    return pd.DataFrame(filas)
+# Historial de ingresos
+st.markdown("### 📋 Historial de ingresos")
 
-# === INICIO DE APP ===
-registrar_primer_ingreso_si_no_existe()
+ingresos = list(col_ingresos.find().sort("fecha", -1))
+if ingresos:
+    df_ingresos = pd.DataFrame(ingresos)[["ip", "fecha"]]
+    df_ingresos.insert(0, "#", range(1, len(df_ingresos)+1))
+    with st.expander("📄 Ingresos registrados", expanded=True):
+        st.dataframe(df_ingresos, use_container_width=True)
+else:
+    st.info("Aún no hay ingresos registrados.")
 
-st.title("🥤 coca-tracker")
+# Historial de consumos
+st.markdown("### 🧾 Historial de consumos")
 
-# Botón para registrar consumo
-if st.button("☠️ Registrar consumo"):
-    registrar_consumo()
-
-# Cronómetro
-mostrar_cronometro()
-
-# Historial desplegable
-with st.expander("📑 Historial de consumos"):
-    df = obtener_historial()
-    st.dataframe(df, use_container_width=True, hide_index=True)
+consumos = list(col_consumos.find({"ip": ip_actual}).sort("fecha", -1))
+if consumos:
+    df_consumos = pd.DataFrame(consumos)[["fecha"]]
+    df_consumos.insert(0, "#", range(1, len(df_consumos)+1))
+    with st.expander("🍷 Consumos registrados", expanded=True):
+        st.dataframe(df_consumos, use_container_width=True)
+else:
+    st.info("No hay consumos registrados aún.")

@@ -2,3 +2,5 @@ streamlit
 pymongo
 pytz
 pandas
+requests
+python-dateutil

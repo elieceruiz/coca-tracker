@@ -1,119 +1,97 @@
 import streamlit as st
-from datetime import datetime, timezone
+from datetime import datetime
 from pymongo import MongoClient
 import pytz
-import pandas as pd
 import requests
-import time
+import pandas as pd
 from dateutil.relativedelta import relativedelta
+import time
 
-# === CONFIGURACIÓN ===
-st.set_page_config("🥤 coca-tracker", layout="centered")
-st.title("🥤 coca-tracker")
+# === CONFIGURACIÓN INICIAL ===
+st.set_page_config("🥤 Coca-Tracker", layout="centered")
+st.title("🥤 Coca-Tracker")
 tz = pytz.timezone("America/Bogota")
 
-# === CONEXIÓN MONGO ===
+# === CONEXIÓN A MONGO ===
 client = MongoClient(st.secrets["mongo_uri"])
 db = client["coca_tracker"]
-ingresos_col = db["ingresos"]
-consumos_col = db["consumos"]
+ingresos = db["ingresos"]
+consumos = db["consumos"]
 
-# === REGISTRAR PRIMER INGRESO ===
+# === FUNCIONES ===
 def obtener_ip():
     try:
         return requests.get("https://api.ipify.org").text
     except:
-        return "IP no disponible"
+        return "desconocida"
 
-ip_actual = obtener_ip()
-existe = ingresos_col.find_one({"ip": ip_actual})
-if not existe:
-    ingresos_col.insert_one({"ip": ip_actual, "fecha": datetime.now(tz=tz)})
+def registrar_ingreso_si_es_primero():
+    if ingresos.count_documents({}) == 0:
+        ip = obtener_ip()
+        doc = {"ip": ip, "fecha": datetime.now(tz)}
+        ingresos.insert_one(doc)
+        st.success("👣 Primer ingreso registrado.")
+    else:
+        st.info("Ingreso ya registrado anteriormente.")
 
-# === DEFINIR FECHA BASE PARA EL CRONÓMETRO ===
-ultimo_consumo = consumos_col.find_one(sort=[("fecha", -1)])
-primer_ingreso = ingresos_col.find_one(sort=[("fecha", 1)])
+def registrar_consumo():
+    ahora = datetime.now(tz)
+    consumos.insert_one({"fecha": ahora})
+    st.success(f"✅ Consumo registrado a las {ahora.strftime('%H:%M:%S')}")
 
-if ultimo_consumo:
-    fecha_base = ultimo_consumo["fecha"].astimezone(tz)
-    fuente = "último consumo"
-elif primer_ingreso:
-    fecha_base = primer_ingreso["fecha"].astimezone(tz)
-    fuente = "primer ingreso"
-else:
-    fecha_base = None
-    fuente = None
+def obtener_base_tiempo():
+    ultimo_consumo = consumos.find_one(sort=[("fecha", -1)])
+    if ultimo_consumo:
+        return ultimo_consumo["fecha"]
+    else:
+        primer_ingreso = ingresos.find_one(sort=[("fecha", 1)])
+        return primer_ingreso["fecha"] if primer_ingreso else None
+
+def cronometro(base):
+    st.markdown("### ⏱️ Tiempo sin consumir")
+    while True:
+        ahora = datetime.now(tz)
+        delta = ahora - base
+        detalle = relativedelta(ahora, base)
+        tiempo = f"{detalle.years}a {detalle.months}m {detalle.days}d {detalle.hours}h {detalle.minutes}m {detalle.seconds}s"
+        minutos = int(delta.total_seconds() // 60)
+
+        st.metric("Duración", f"{minutos:,} min", tiempo)
+        time.sleep(1)
+        st.rerun()
+
+def tabla_eventos(coleccion, label):
+    datos = list(coleccion.find().sort("fecha", -1 if label == "Consumos" else 1))
+    filas = []
+    for i, doc in enumerate(datos):
+        fecha = doc["fecha"].astimezone(tz)
+        fila = {
+            "N°": i + 1,
+            "Fecha": fecha.strftime("%Y-%m-%d"),
+            "Hora": fecha.strftime("%H:%M:%S")
+        }
+        if "ip" in doc:
+            fila["IP"] = doc["ip"]
+        filas.append(fila)
+    df = pd.DataFrame(filas)
+    st.subheader(f"📑 Historial de {label}")
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+# === EJECUCIÓN PRINCIPAL ===
+registrar_ingreso_si_es_primero()
+
+st.markdown("### ¿Consumiste Coca-Cola?")
+if st.button("☠️ Registrar consumo"):
+    registrar_consumo()
 
 # === CRONÓMETRO AL SEGUNDO ===
-st.subheader("⏱ Tiempo desde " + (fuente if fuente else "N/A"))
-
-if fecha_base:
-    ahora = datetime.now(tz)
-    delta = ahora - fecha_base
-    detalle = relativedelta(ahora, fecha_base)
-    minutos = int(delta.total_seconds() // 60)
-    tiempo_str = f"{detalle.years}a {detalle.months}m {detalle.days}d {detalle.hours}h {detalle.minutes}m {detalle.seconds}s"
-    st.metric("Duración", f"{minutos:,} min", tiempo_str)
-    time.sleep(1)
-    st.rerun()
+base = obtener_base_tiempo()
+if base:
+    cronometro(base)
 else:
-    st.info("No hay registros para iniciar el conteo.")
+    st.warning("Aún no hay datos para calcular el tiempo sin consumir.")
 
-# === BOTÓN REGISTRAR CONSUMO ===
-st.markdown("---")
-st.subheader("💀 Registrar consumo de Coca-Cola")
-
-if st.button("💀 Registrar consumo"):
-    ahora = datetime.now(tz=tz)
-    anterior = consumos_col.find_one(sort=[("fecha", -1)])
-    doc = {"fecha": ahora}
-    if anterior:
-        delta = ahora - anterior["fecha"].astimezone(tz)
-        segundos = int(delta.total_seconds())
-        minutos, segundos = divmod(segundos, 60)
-        horas, minutos = divmod(minutos, 60)
-        dias = delta.days
-        doc["desde_anterior"] = {
-            "dias": dias,
-            "horas": horas,
-            "minutos": minutos,
-            "segundos": segundos
-        }
-    consumos_col.insert_one(doc)
-    st.success("Consumo registrado.")
-    time.sleep(1)
-    st.rerun()
-
-# === HISTORIAL DE INGRESOS ===
-st.markdown("---")
-st.subheader("📍 Ingresos a la App")
-ingresos = list(ingresos_col.find({}).sort("fecha", -1))
-filas = []
-for i, x in enumerate(ingresos):
-    fecha = x["fecha"].astimezone(tz)
-    filas.append({
-        "N°": len(ingresos) - i,
-        "IP": x.get("ip", "Desconocida"),
-        "Fecha": fecha.strftime("%Y-%m-%d"),
-        "Hora": fecha.strftime("%H:%M:%S")
-    })
-df_ingresos = pd.DataFrame(filas)
-st.dataframe(df_ingresos, use_container_width=True)
-
-# === HISTORIAL DE CONSUMOS ===
-st.markdown("---")
-st.subheader("📍 Historial de consumos")
-consumos = list(consumos_col.find({}).sort("fecha", -1))
-filas = []
-for i, c in enumerate(consumos):
-    fecha = c["fecha"].astimezone(tz)
-    dur = c.get("desde_anterior")
-    tiempo = f"{dur['dias']}d {dur['horas']}h {dur['minutos']}m {dur['segundos']}s" if dur else "-"
-    filas.append({
-        "N°": len(consumos) - i,
-        "Fecha": fecha.strftime("%Y-%m-%d"),
-        "Hora": fecha.strftime("%H:%M:%S"),
-        "Desde el anterior": tiempo
-    })
-df_consumos = pd.DataFrame(filas)
-st.dataframe(df_consumos, use_container_width=True)
+# === HISTORIALES ===
+with st.expander("📂 Ver historial completo"):
+    tabla_eventos(ingresos, "Ingresos")
+    tabla_eventos(consumos, "Consumos")

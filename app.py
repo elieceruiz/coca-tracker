@@ -78,7 +78,7 @@ if "ingreso_registrado" not in st.session_state:
     registrar_ingreso()
     st.session_state["ingreso_registrado"] = True
 
-# === HISTORIAL (opcional)
+# === HISTORIAL CONSUMOS ===
 with st.expander("📜 Historial"):
     historial = list(col_consumos.find().sort("fecha", -1))
     if historial:
@@ -89,3 +89,15 @@ with st.expander("📜 Historial"):
         st.dataframe(df[["fecha"]], use_container_width=True)
     else:
         st.info("Sin consumos registrados.")
+
+# === HISTORIAL INGRESOS ===
+with st.expander("🧾 Ingresos a la App"):
+    ingresos = list(col_ingresos.find().sort("fecha", -1))
+    if ingresos:
+        df_ingresos = pd.DataFrame(ingresos)
+        df_ingresos["_id"] = df_ingresos["_id"].astype(str)
+        df_ingresos["fecha"] = pd.to_datetime(df_ingresos["fecha"]).dt.tz_convert(tz).dt.strftime("%Y-%m-%d %H:%M:%S")
+        df_ingresos.index = range(len(df_ingresos), 0, -1)
+        st.dataframe(df_ingresos[["fecha", "ip"]], use_container_width=True)
+    else:
+        st.info("Sin ingresos registrados.")

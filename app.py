@@ -1,94 +1,111 @@
 import streamlit as st
-from datetime import datetime, timezone
 from pymongo import MongoClient
+from datetime import datetime
 import pytz
+import requests
 import time
+import pandas as pd
 
-# --- CONFIGURACIÓN ---
-st.set_page_config("🧃 coca-tracker", layout="centered")
-st.title("🧃 coca-\ntracker")
-col = st.container()
+# Configuración de página
+st.set_page_config("⏱ Tiempo sin consumir", layout="centered")
+st.title("⏱ Tiempo sin consumir")
+tz = pytz.timezone("America/Bogota")
 
-# --- CONEXIÓN A MONGODB ---
+# Conexión a MongoDB
 client = MongoClient(st.secrets["mongo_uri"])
 db = client["coca_tracker"]
-consumos_col = db["consumos"]
-ingresos_col = db["ingresos"]
+col_consumos = db["consumos"]
+col_ingresos = db["ingresos"]
 
-# --- FUNCIONES ---
+# Obtener IP actual
+def obtener_ip():
+    try:
+        return requests.get("https://api.ipify.org").text
+    except:
+        return "ip_desconocida"
 
-def registrar_ingreso_si_es_primero():
-    if ingresos_col.count_documents({}) == 0:
-        ip = st.session_state.get("ip_address", "ip_desconocida")
-        ingresos_col.insert_one({
-            "ip": ip,
-            "fecha": datetime.now(timezone.utc)
+# Registrar ingreso único por día e IP
+def registrar_ingreso_unico():
+    ip_actual = obtener_ip()
+    hoy = datetime.now(tz).date()
+    ya_existe = col_ingresos.find_one({
+        "ip": ip_actual,
+        "fecha": {"$gte": datetime.combine(hoy, datetime.min.time(), tz)}
+    })
+    if not ya_existe:
+        col_ingresos.insert_one({
+            "ip": ip_actual,
+            "fecha": datetime.now(tz)
         })
 
-def obtener_base_tiempo():
-    ultimo_consumo = consumos_col.find_one(sort=[("fecha", -1)])
-    if ultimo_consumo:
-        return ultimo_consumo["fecha"]
-    primer_ingreso = ingresos_col.find_one(sort=[("fecha", 1)])
-    if primer_ingreso:
-        return primer_ingreso["fecha"]
-    return None
-
-def registrar_consumo():
-    consumos_col.insert_one({"fecha": datetime.now(timezone.utc)})
-
+# Cronómetro que corre al segundo
 def cronometro(base):
-    st.subheader("⏱ Tiempo sin consumir")
+    placeholder = st.empty()
     while True:
-        ahora = datetime.now(timezone.utc)
+        ahora = datetime.now(tz)
         delta = ahora - base
-        duracion_segundos = int(delta.total_seconds())
-        horas, resto = divmod(duracion_segundos, 3600)
-        minutos, segundos = divmod(resto, 60)
-        st.metric("Tiempo", f"{horas:02}:{minutos:02}:{segundos:02}")
+        segundos = int(delta.total_seconds())
+        dias = segundos // 86400
+        horas = (segundos % 86400) // 3600
+        minutos = (segundos % 3600) // 60
+        segundos_restantes = segundos % 60
+        placeholder.markdown(
+            f"**{dias} días, {horas:02d}:{minutos:02d}:{segundos_restantes:02d} sin consumir.**"
+        )
         time.sleep(1)
-        st.rerun()
 
-def mostrar_historial():
-    st.subheader("📜 Historial")
+# Obtener fechas
+def obtener_ultimo_consumo():
+    doc = col_consumos.find_one(sort=[("fecha", -1)])
+    return doc["fecha"] if doc else None
 
-    # --- HISTORIAL CONSUMOS ---
-    consumos = list(consumos_col.find().sort("fecha", -1))
-    if consumos:
-        fechas = [c["fecha"].astimezone(pytz.timezone("America/Bogota")).strftime("%Y-%m-%d %H:%M:%S") for c in consumos]
-        numeracion = list(range(len(fechas), 0, -1))
-        st.markdown("**☠️ Consumos**")
-        st.dataframe({"#": numeracion, "Fecha": fechas})
-    else:
-        st.info("No hay consumos registrados aún.")
+def obtener_primer_ingreso():
+    doc = col_ingresos.find_one(sort=[("fecha", 1)])
+    return doc["fecha"] if doc else None
 
-    # --- HISTORIAL INGRESOS ---
-    ingresos = list(ingresos_col.find().sort("fecha", -1))
-    if ingresos:
-        fechas = [i["fecha"].astimezone(pytz.timezone("America/Bogota")).strftime("%Y-%m-%d %H:%M:%S") for i in ingresos]
-        ips = [i.get("ip", "desconocida") for i in ingresos]
-        numeracion = list(range(len(fechas), 0, -1))
-        st.markdown("**🚪 Ingresos**")
-        st.dataframe({"#": numeracion, "IP": ips, "Fecha": fechas})
-    else:
-        st.info("No hay ingresos registrados aún.")
-
-# --- REGISTRAR PRIMER INGRESO ---
-registrar_ingreso_si_es_primero()
-
-# --- BOTÓN PARA REGISTRAR CONSUMO ---
-st.subheader("💀 Registrar consumo")
+# Registrar consumo actual
 if st.button("💀 Registrar consumo"):
-    registrar_consumo()
-    st.success("Consumo registrado.")
+    col_consumos.insert_one({
+        "fecha": datetime.now(tz),
+        "ip": obtener_ip()
+    })
+    st.success("Registro de consumo realizado correctamente.")
     st.rerun()
 
-# --- CRONÓMETRO ---
-base = obtener_base_tiempo()
-if base is not None:
-    cronometro(base)
-else:
-    st.warning("⚠️ No se ha registrado ningún ingreso ni consumo aún.")
+# Registrar ingreso diario por IP
+registrar_ingreso_unico()
 
-# --- HISTORIAL ---
-mostrar_historial()
+# Base del cronómetro
+fecha_base = obtener_ultimo_consumo() or obtener_primer_ingreso()
+
+if fecha_base:
+    cronometro(fecha_base)
+else:
+    st.warning("Aún no hay registros de ingreso ni consumo.")
+
+# Historial
+st.subheader("📜 Historial")
+
+tabs = st.tabs(["💀 Consumos", "📥 Ingresos"])
+
+with tabs[0]:
+    docs = list(col_consumos.find().sort("fecha", -1))
+    if docs:
+        df = pd.DataFrame([{
+            "Fecha": doc["fecha"].astimezone(tz).strftime("%Y-%m-%d %H:%M:%S"),
+            "IP": doc.get("ip", "desconocida")
+        } for doc in docs])
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("No hay registros de consumo.")
+
+with tabs[1]:
+    docs = list(col_ingresos.find().sort("fecha", -1))
+    if docs:
+        df = pd.DataFrame([{
+            "Fecha": doc["fecha"].astimezone(tz).strftime("%Y-%m-%d %H:%M:%S"),
+            "IP": doc.get("ip", "desconocida")
+        } for doc in docs])
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("No hay ingresos registrados.")

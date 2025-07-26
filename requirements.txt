@@ -4,3 +4,4 @@ pytz
 pandas
 requests
 python-dateutil
+streamlit-autorefresh

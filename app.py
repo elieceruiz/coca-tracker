@@ -4,6 +4,7 @@ from pymongo import MongoClient
 import pytz
 import pandas as pd
 import requests
+from dateutil.relativedelta import relativedelta
 
 # === CONFIG ===
 st.set_page_config(page_title="🥤 coca-tracker", layout="centered")
@@ -15,7 +16,7 @@ db = client["bucle_coca"]
 coleccion_eventos = db["eventos"]
 coleccion_ingresos = db["ingresos"]
 
-# === OPCIONES DE NAVEGACIÓN ===
+# === SELECTOR DE VISTA ===
 opciones = {
     "🥤 Registrar consumo": "consumo",
     "📒 Historial completo": "historial"
@@ -47,7 +48,8 @@ def obtener_ultimo_consumo():
     return coleccion_eventos.find_one(sort=[("timestamp", -1)])
 
 def calcular_duracion(inicio, fin):
-    return str(fin - inicio).split(".")[0]
+    delta = relativedelta(fin, inicio)
+    return f"{delta.years}a {delta.months}m {delta.days}d {delta.hours}h {delta.minutes}m"
 
 # === INICIO DE SESIÓN ===
 ip = obtener_ip()
@@ -57,7 +59,7 @@ if not ingreso:
     st.error("No se pudo registrar tu ingreso.")
     st.stop()
 
-# === VISTA: REGISTRO DE CONSUMO ===
+# === VISTA: REGISTRAR CONSUMO ===
 if opcion == "consumo":
     st.header("📍 Registrar consumo de Coca-Cola")
 
@@ -97,7 +99,8 @@ elif opcion == "historial":
                 "Fecha y hora": doc["primer_ingreso"].astimezone(colombia).strftime("%Y-%m-%d %H:%M:%S")
             })
         st.subheader("📋 Ingresos registrados")
-        st.dataframe(pd.DataFrame(datos), use_container_width=True)
+        df_ingresos = pd.DataFrame(datos)
+        st.dataframe(df_ingresos, use_container_width=True, hide_index=True)
     else:
         st.info("No hay ingresos registrados aún.")
 
@@ -108,7 +111,11 @@ elif opcion == "historial":
         for i in range(len(eventos)):
             actual = eventos[i]["timestamp"].astimezone(colombia)
             anterior = eventos[i+1]["timestamp"].astimezone(colombia) if i+1 < len(eventos) else None
-            duracion = calcular_duracion(anterior, actual) if anterior else "-"
+            if anterior:
+                delta = relativedelta(actual, anterior)
+                duracion = f"{delta.years}a {delta.months}m {delta.days}d {delta.hours}h {delta.minutes}m"
+            else:
+                duracion = "-"
             filas.append({
                 "#": i + 1,
                 "Fecha": actual.strftime("%Y-%m-%d"),
@@ -116,6 +123,7 @@ elif opcion == "historial":
                 "Desde el anterior": duracion
             })
         st.subheader("📋 Consumos registrados")
-        st.dataframe(pd.DataFrame(filas), use_container_width=True)
+        df_consumos = pd.DataFrame(filas)
+        st.dataframe(df_consumos, use_container_width=True, hide_index=True)
     else:
         st.info("No hay consumos registrados aún.")

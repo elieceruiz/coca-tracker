@@ -5,7 +5,7 @@ import pytz
 import pandas as pd
 import requests
 from dateutil.relativedelta import relativedelta
-import time
+from streamlit_autorefresh import st_autorefresh
 
 # === CONFIG ===
 st.set_page_config(page_title="🥤 coca-tracker", layout="centered")
@@ -67,24 +67,24 @@ if opcion == "consumo":
     st.markdown(f"**👤 Tu IP registrada:** `{ip}`")
     st.markdown(f"**🕓 Primer ingreso:** {ingreso['primer_ingreso'].astimezone(colombia).strftime('%Y-%m-%d %H:%M:%S')}")
 
-    inicio_conteo = ingreso["primer_ingreso"].astimezone(colombia)
+    # Determinar desde dónde contar
     ultimo_consumo = obtener_ultimo_consumo()
-    if ultimo_consumo and ultimo_consumo["timestamp"] > ingreso["primer_ingreso"]:
+    if ultimo_consumo:
         inicio_conteo = ultimo_consumo["timestamp"].astimezone(colombia)
         origen = "último consumo"
     else:
+        inicio_conteo = ingreso["primer_ingreso"].astimezone(colombia)
         origen = "primer ingreso"
 
     st.markdown(f"**⏳ El conteo parte desde tu {origen}:** {inicio_conteo.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    # CRONÓMETRO EN TIEMPO REAL
-    contenedor = st.empty()
-    while True:
-        ahora = datetime.now(colombia)
-        duracion = calcular_duracion(inicio_conteo, ahora)
-        contenedor.metric("🕒 Tiempo transcurrido", duracion)
-        time.sleep(1)
+    # Cronómetro en tiempo real
+    st_autorefresh(interval=1000, key="refresh")
+    ahora = datetime.now(colombia)
+    duracion = calcular_duracion(inicio_conteo, ahora)
+    st.metric("🕒 Tiempo transcurrido", duracion)
 
+    # Botón para registrar consumo
     if st.button("Registrar consumo de Coca-Cola 🟥"):
         coleccion_eventos.insert_one({"timestamp": datetime.now(colombia)})
         st.success("✅ Consumo registrado correctamente")

@@ -36,7 +36,8 @@ def obtener_ip():
         return "IP no disponible"
 
 def registrar_ingreso(ip):
-    if not coleccion_ingresos.find_one({"ip": ip}):
+    existe = coleccion_ingresos.find_one({"ip": ip})
+    if not existe:
         coleccion_ingresos.insert_one({
             "ip": ip,
             "primer_ingreso": datetime.now(colombia)
@@ -69,7 +70,7 @@ if opcion == "consumo":
 
     # Determinar desde dónde contar
     ultimo_consumo = obtener_ultimo_consumo()
-    if ultimo_consumo:
+    if ultimo_consumo and ultimo_consumo["timestamp"] > ingreso["primer_ingreso"]:
         inicio_conteo = ultimo_consumo["timestamp"].astimezone(colombia)
         origen = "último consumo"
     else:
@@ -79,7 +80,7 @@ if opcion == "consumo":
     st.markdown(f"**⏳ El conteo parte desde tu {origen}:** {inicio_conteo.strftime('%Y-%m-%d %H:%M:%S')}")
 
     # Cronómetro en tiempo real
-    st_autorefresh(interval=1000, key="refresh")
+    st_autorefresh(interval=1000, key="auto_refresh")
     ahora = datetime.now(colombia)
     duracion = calcular_duracion(inicio_conteo, ahora)
     st.metric("🕒 Tiempo transcurrido", duracion)

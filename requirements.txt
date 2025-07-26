@@ -1,6 +1,5 @@
 streamlit
 pymongo
 pytz
-python-dateutil
-pandas
 requests
+pandas

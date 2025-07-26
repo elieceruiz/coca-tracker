@@ -79,15 +79,11 @@ if opcion == "consumo":
 
     # CRONÓMETRO EN TIEMPO REAL
     contenedor = st.empty()
-    if "cronometro_iniciado" not in st.session_state:
-        st.session_state["cronometro_iniciado"] = True
-        st.rerun()
     while True:
         ahora = datetime.now(colombia)
         duracion = calcular_duracion(inicio_conteo, ahora)
-        contenedor.metric("⏱ Tiempo transcurrido", duracion)
+        contenedor.metric("🕒 Tiempo transcurrido", duracion)
         time.sleep(1)
-        st.rerun()
 
     if st.button("Registrar consumo de Coca-Cola 🟥"):
         coleccion_eventos.insert_one({"timestamp": datetime.now(colombia)})
@@ -109,8 +105,7 @@ elif opcion == "historial":
                 "Fecha y hora": doc["primer_ingreso"].astimezone(colombia).strftime("%Y-%m-%d %H:%M:%S")
             })
         st.subheader("📋 Ingresos registrados")
-        df_ingresos = pd.DataFrame(datos)
-        st.dataframe(df_ingresos, use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(datos), use_container_width=True, hide_index=True)
     else:
         st.info("No hay ingresos registrados aún.")
 
@@ -133,7 +128,6 @@ elif opcion == "historial":
                 "Desde el anterior": duracion
             })
         st.subheader("📋 Consumos registrados")
-        df_consumos = pd.DataFrame(filas)
-        st.dataframe(df_consumos, use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True)
     else:
         st.info("No hay consumos registrados aún.")

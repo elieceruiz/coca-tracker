@@ -1,101 +1,94 @@
 import streamlit as st
-from datetime import datetime
 from pymongo import MongoClient
+from datetime import datetime
 import pytz
 import pandas as pd
 import requests
 import time
 
-# === CONFIGURACIÓN ===
-st.set_page_config("🥤 coca-tracker", layout="centered")
-tz = pytz.timezone("America/Bogota")
-st.markdown("## 🥤 coca-\n### tracker")
+# CONFIG
+st.set_page_config(page_title="coca-tracker", layout="centered")
+st.title("🥤 coca-\ntracker")
 
-# === CONEXIÓN A BASE DE DATOS ===
+# ZONA HORARIA
+colombia = pytz.timezone("America/Bogota")
+
+# CONEXIÓN MONGO
 client = MongoClient(st.secrets["mongo_uri"])
 db = client["coca_tracker"]
 consumos = db["consumos"]
 ingresos = db["ingresos"]
 
-# === REGISTRAR IP E INGRESO ===
-def obtener_ip():
-    try:
-        ip = requests.get("https://api.ipify.org").text
-        return ip
-    except:
-        return "Desconocida"
+# IP USUARIO
+ip = requests.get("https://api.ipify.org").text
 
-ip_usuario = obtener_ip()
-ahora = datetime.now(tz)
+# REGISTRAR INGRESO SI NO EXISTE
+if ingresos.count_documents({"ip": ip}) == 0:
+    ingresos.insert_one({"ip": ip, "fecha": datetime.now(colombia)})
 
-# Verificar si la IP ya ha ingresado antes
-registro_existente = ingresos.find_one({"ip": ip_usuario})
+# OBTENER FECHA DE REFERENCIA
+ultimo_consumo = consumos.find_one(sort=[("fecha", -1)])
+primer_ingreso = ingresos.find_one(sort=[("fecha", 1)])
 
-# Si no hay registro previo, registrar este ingreso
-if not registro_existente:
-    ingresos.insert_one({"ip": ip_usuario, "fecha_hora": ahora})
-
-# Obtener primer ingreso general para esta IP
-primer_ingreso_ip = ingresos.find_one({"ip": ip_usuario}, sort=[("fecha_hora", 1)])
-
-# Obtener último consumo, si existe
-ultimo_consumo = consumos.find_one(sort=[("fecha_hora", -1)])
-
-# Establecer el inicio del conteo
 if ultimo_consumo:
-    inicio = ultimo_consumo["fecha_hora"]
+    fecha_inicio = ultimo_consumo["fecha"]
 else:
-    inicio = primer_ingreso_ip["fecha_hora"] if primer_ingreso_ip else ahora
+    fecha_inicio = primer_ingreso["fecha"] if primer_ingreso else None
 
-# === PANTALLA PRINCIPAL ===
-opcion = st.selectbox("¿Qué querés hacer?", ["🥴 Registrar consumo", "📒 Historial completo"])
+# MENÚ
+opcion = st.selectbox("¿Qué querés hacer?", ["Registrar consumo", "Historial completo"])
 
-# === REGISTRAR CONSUMO ===
-if opcion == "🥴 Registrar consumo":
-    if st.button("💀 Registrar consumo"):
-        consumos.insert_one({"fecha_hora": datetime.now(tz)})
-        st.success("✅ Consumo registrado correctamente.")
-        st.rerun()
+# === REGISTRO DE CONSUMO ===
+if opcion == "Registrar consumo":
+    st.subheader("💀 Registrar consumo")
+    if st.button("🧊 Registrar consumo"):
+        consumos.insert_one({"fecha": datetime.now(colombia)})
+        st.success("¡Consumo registrado!")
 
-    st.subheader("⏱️ Tiempo sin consumir")
+    st.markdown("## ⏱ Tiempo sin consumir")
 
-    if inicio:
+    if fecha_inicio:
         while True:
-            duracion_segundos = int((datetime.now(tz) - inicio).total_seconds())
+            now = datetime.now(colombia)
+            duracion_segundos = int((now - fecha_inicio).total_seconds())
+
             dias = duracion_segundos // 86400
             horas = (duracion_segundos % 86400) // 3600
             minutos = (duracion_segundos % 3600) // 60
             segundos = duracion_segundos % 60
-            st.metric("Duración", f"{dias}d {horas}h {minutos}m {segundos}s")
-            st.markdown(f"🟢 Desde: {inicio.strftime('%Y-%m-%d %H:%M:%S')}")
+
+            st.metric("Duración", f"{minutos} min", f"↑ {dias}a {horas}h {minutos}m {segundos}s")
+            st.markdown(f"🔴 Desde: {fecha_inicio.strftime('%Y-%m-%d %H:%M:%S')}")
             time.sleep(1)
             st.rerun()
+    else:
+        st.warning("No hay datos para calcular el tiempo.")
 
 # === HISTORIAL COMPLETO ===
-elif opcion == "📒 Historial completo":
+elif opcion == "Historial completo":
+    st.header("📒 Historial completo")
+
     st.subheader("📋 Ingresos registrados")
-
-    ingresos_cursor = ingresos.find().sort("fecha_hora", -1)
-    ingresos_df = pd.DataFrame(ingresos_cursor)
-
-    if not ingresos_df.empty:
-        ingresos_df["fecha_hora"] = ingresos_df["fecha_hora"].dt.strftime('%Y-%m-%d %H:%M:%S')
-        ingresos_df = ingresos_df[["ip", "fecha_hora"]]
-        ingresos_df.insert(0, "#", range(1, len(ingresos_df) + 1))
-        st.dataframe(ingresos_df, use_container_width=True)
+    datos_ingresos = list(ingresos.find().sort("fecha", -1))
+    if datos_ingresos:
+        df = pd.DataFrame(datos_ingresos)
+        df["_id"] = None
+        df = df[["ip", "fecha"]]
+        df.columns = ["IP", "Fecha y hora"]
+        df["#"] = range(1, len(df) + 1)
+        df = df[["#", "IP", "Fecha y hora"]]
+        st.dataframe(df)
     else:
-        st.info("No hay ingresos registrados aún.")
+        st.info("No hay ingresos registrados.")
 
-    st.divider()
-    st.subheader("📍 Consumos registrados")
-
-    consumos_cursor = consumos.find().sort("fecha_hora", -1)
-    consumos_df = pd.DataFrame(consumos_cursor)
-
-    if not consumos_df.empty:
-        consumos_df["fecha_hora"] = consumos_df["fecha_hora"].dt.strftime('%Y-%m-%d %H:%M:%S')
-        consumos_df = consumos_df[["fecha_hora"]]
-        consumos_df.insert(0, "#", range(1, len(consumos_df) + 1))
-        st.dataframe(consumos_df, use_container_width=True)
+    st.subheader("🥤 Consumos registrados")
+    datos_consumos = list(consumos.find().sort("fecha", -1))
+    if datos_consumos:
+        df_c = pd.DataFrame(datos_consumos)
+        df_c["_id"] = None
+        df_c.columns = ["_", "Fecha y hora"]
+        df_c["#"] = range(1, len(df_c) + 1)
+        df_c = df_c[["#", "Fecha y hora"]]
+        st.dataframe(df_c)
     else:
-        st.info("No hay consumos registrados aún.")
+        st.info("No hay consumos registrados.")

@@ -3,3 +3,4 @@ pymongo
 pytz
 requests
 pandas
+python-dateutil

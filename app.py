@@ -5,6 +5,7 @@ import pytz
 import pandas as pd
 import requests
 from dateutil.relativedelta import relativedelta
+import time
 
 # === CONFIG ===
 st.set_page_config(page_title="🥤 coca-tracker", layout="centered")
@@ -49,7 +50,7 @@ def obtener_ultimo_consumo():
 
 def calcular_duracion(inicio, fin):
     delta = relativedelta(fin, inicio)
-    return f"{delta.years}a {delta.months}m {delta.days}d {delta.hours}h {delta.minutes}m"
+    return f"{delta.years}a {delta.months}m {delta.days}d {delta.hours}h {delta.minutes}m {delta.seconds}s"
 
 # === INICIO DE SESIÓN ===
 ip = obtener_ip()
@@ -75,9 +76,18 @@ if opcion == "consumo":
         origen = "primer ingreso"
 
     st.markdown(f"**⏳ El conteo parte desde tu {origen}:** {inicio_conteo.strftime('%Y-%m-%d %H:%M:%S')}")
-    ahora = datetime.now(colombia)
-    duracion = calcular_duracion(inicio_conteo, ahora)
-    st.metric("⏱ Tiempo transcurrido", duracion)
+
+    # CRONÓMETRO EN TIEMPO REAL
+    contenedor = st.empty()
+    if "cronometro_iniciado" not in st.session_state:
+        st.session_state["cronometro_iniciado"] = True
+        st.rerun()
+    while True:
+        ahora = datetime.now(colombia)
+        duracion = calcular_duracion(inicio_conteo, ahora)
+        contenedor.metric("⏱ Tiempo transcurrido", duracion)
+        time.sleep(1)
+        st.rerun()
 
     if st.button("Registrar consumo de Coca-Cola 🟥"):
         coleccion_eventos.insert_one({"timestamp": datetime.now(colombia)})

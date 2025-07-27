@@ -24,13 +24,13 @@ def obtener_ip():
     except:
         return "IP_DESCONOCIDA"
 
-# === REGISTRAR INGRESO (solo una vez por sesión) ===
-if "ingreso_registrado" not in st.session_state:
-    col_ingresos.insert_one({
-        "ip": obtener_ip(),
-        "fecha": datetime.now(tz)
-    })
-    st.session_state["ingreso_registrado"] = True
+# === REGISTRAR INGRESO (cada vez que se abre la App) ===
+ip_actual = obtener_ip()
+col_ingresos.insert_one({
+    "ip": ip_actual,
+    "fecha": datetime.now(tz)
+})
+st.write("Ingreso registrado con IP:", ip_actual)
 
 # === REGISTRAR CONSUMO ===
 if st.button("💀 Registrar consumo"):

@@ -1,92 +1,93 @@
 import streamlit as st
 from datetime import datetime
-from pymongo import MongoClient
 import pytz
 import time
 import requests
+from pymongo import MongoClient
+import pandas as pd
 
-# Configuración de la página
-st.set_page_config(page_title="🧠 coca-tracker", layout="centered")
+# === CONFIG ===
+st.set_page_config("Tiempo sin consumir", layout="centered")
 st.title("💀 Tiempo sin consumir")
+tz = pytz.timezone("America/Bogota")
 
-# Zona horaria
-colombia = pytz.timezone("America/Bogota")
-
-# Conexión a MongoDB
+# === MONGO ===
 client = MongoClient(st.secrets["mongo_uri"])
 db = client["coca_tracker"]
-coleccion_eventos = db["eventos"]
-coleccion_ingresos = db["ingresos"]
+col_consumos = db["consumos"]
+col_ingresos = db["ingresos"]
 
-# === Registrar ingreso a la App ===
-def registrar_ingreso():
+# === OBTENER IP Y CIUDAD ===
+def obtener_ip_y_ciudad():
     try:
-        ip_info = requests.get("https://ipinfo.io/json").json()
-        ip = ip_info.get("ip", "Desconocida")
-        ciudad = ip_info.get("city", "Desconocida")
+        data = requests.get("https://ipinfo.io/json", timeout=5).json()
+        return data.get("ip", "Desconocida"), data.get("city", "Desconocida")
     except:
-        ip = "Error"
-        ciudad = "Error"
+        return "IP_ERROR", "CIUDAD_ERROR"
 
-    ingreso = {
-        "fecha": datetime.utcnow(),
-        "ip": ip,
-        "ciudad": ciudad
-    }
-    coleccion_ingresos.insert_one(ingreso)
-
-# Ejecutar solo una vez por sesión
+# === REGISTRAR INGRESO (una vez por sesión) ===
 if "ingreso_registrado" not in st.session_state:
-    registrar_ingreso()
-    st.session_state.ingreso_registrado = True
+    ip, ciudad = obtener_ip_y_ciudad()
+    col_ingresos.insert_one({
+        "ip": ip,
+        "ciudad": ciudad,
+        "fecha": datetime.utcnow()
+    })
+    st.session_state["ingreso_registrado"] = True
 
-# === Obtener último evento ===
-ultimo_evento = coleccion_eventos.find_one(sort=[("fecha", -1)])
-
+# === REGISTRAR CONSUMO ===
 if st.button("💀 Registrar consumo"):
-    coleccion_eventos.insert_one({"fecha": datetime.utcnow()})
-    st.success("Evento registrado. Racha reiniciada.")
+    col_consumos.insert_one({"fecha": datetime.utcnow()})
+    st.error("☠️ Consumo registrado.")
     st.rerun()
 
-# === Mostrar cronómetro de abstinencia ===
-st.markdown("⏳ **Tiempo transcurrido**")
+# === DEFINIR FECHA BASE DEL CRONÓMETRO ===
+ultimo_consumo = col_consumos.find_one(sort=[("fecha", -1)])
+primer_ingreso = col_ingresos.find_one(sort=[("fecha", 1)])
 
-if ultimo_evento:
-    fecha_evento = ultimo_evento["fecha"].replace(tzinfo=pytz.UTC).astimezone(colombia)
+if ultimo_consumo:
+    fecha_base = ultimo_consumo["fecha"].replace(tzinfo=pytz.UTC).astimezone(tz)
+elif primer_ingreso:
+    fecha_base = primer_ingreso["fecha"].replace(tzinfo=pytz.UTC).astimezone(tz)
+else:
+    fecha_base = None
 
+# === CRONÓMETRO ===
+if fecha_base:
     marcador = st.empty()
     while True:
-        ahora = datetime.now(colombia)
-        delta = ahora - fecha_evento
-        horas, rem = divmod(delta.total_seconds(), 3600)
-        minutos, segundos = divmod(rem, 60)
-        tiempo = f"{int(horas):02}:{int(minutos):02}:{int(segundos):02}"
-        marcador.markdown(f"### {tiempo}")
+        ahora = datetime.now(tz)
+        delta = ahora - fecha_base
+        h, rem = divmod(delta.total_seconds(), 3600)
+        m, s = divmod(rem, 60)
+        tiempo = f"{int(h):02}:{int(m):02}:{int(s):02}"
+        marcador.markdown(f"### ⏳ {tiempo}")
         time.sleep(1)
 else:
-    st.info("Aún no se ha registrado ningún consumo.")
+    st.info("No hay registros aún. Ingresa o registra consumo.")
 
-# === Mostrar historial de ingresos ===
-st.subheader("🪪 Historial de ingresos a la App")
+# === HISTORIAL DE CONSUMOS ===
+with st.expander("📜 Historial de consumos"):
+    registros = list(col_consumos.find().sort("fecha", -1))
+    if registros:
+        df = pd.DataFrame(registros)
+        df["_id"] = df["_id"].astype(str)
+        df["fecha"] = pd.to_datetime(df["fecha"]).dt.tz_convert(tz).dt.strftime("%Y-%m-%d %H:%M:%S")
+        df.index = range(len(df), 0, -1)
+        st.dataframe(df[["fecha"]], use_container_width=True)
+    else:
+        st.info("Sin consumos registrados.")
 
-ingresos = list(coleccion_ingresos.find().sort("fecha", -1))
-if ingresos:
-    for ingreso in ingresos:
-        fecha = ingreso.get("fecha")
-        ip = ingreso.get("ip", "Desconocida")
-        ciudad = ingreso.get("ciudad", "Desconocida")
-
-        if isinstance(fecha, str):
-            try:
-                fecha = datetime.fromisoformat(fecha)
-            except:
-                fecha = None
-
-        if fecha:
-            fecha_str = fecha.replace(tzinfo=pytz.UTC).astimezone(colombia).strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            fecha_str = "Desconocida"
-
-        st.write(f"{fecha_str} — IP: {ip} — Ciudad: {ciudad}")
-else:
-    st.info("Aún no hay ingresos registrados.")
+# === HISTORIAL DE INGRESOS ===
+with st.expander("🧾 Ingresos a la App"):
+    ingresos = list(col_ingresos.find().sort("fecha", -1))
+    if ingresos:
+        df = pd.DataFrame(ingresos)
+        df["_id"] = df["_id"].astype(str)
+        df["fecha"] = pd.to_datetime(df["fecha"]).dt.tz_convert(tz).dt.strftime("%Y-%m-%d %H:%M:%S")
+        df.index = range(len(df), 0, -1)
+        df["N°"] = df.index
+        df = df[["N°", "fecha", "ip", "ciudad"]]
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("Sin ingresos registrados.")

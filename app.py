@@ -57,7 +57,7 @@ if st.button("💀 Registrar consumo"):
     col_consumos.insert_one({"fecha": datetime.now(tz)})
     st.error("☠️ Consumo registrado.")
 
-# === REGISTRAR INGRESO (PRIMERA VEZ EN SESIÓN) ===
+# === REGISTRAR INGRESO ===
 if "ingreso_registrado" not in st.session_state:
     ip_real = obtener_ip_navegador()
     if ip_real:
@@ -78,34 +78,14 @@ if base:
 else:
     st.warning("Aún no hay ingresos ni consumos registrados.")
 
-# === DEBUG TEMPORAL DE INGRESOS ===
-debug_data = list(col_ingresos.find().sort("timestamp", -1))
-if debug_data:
-    st.write("🔎 Debug de ingresos:")
-    st.json(debug_data)
+# === HISTORIAL DE INGRESOS – SELECTBOX ===
+st.subheader("🧾 Ver un ingreso registrado")
+ingresos = list(col_ingresos.find().sort("timestamp", -1))
+if ingresos:
+    opciones = [
+        f"{i['timestamp'].astimezone(tz).strftime('%Y-%m-%d %H:%M:%S')} – {i['ciudad']} – {i['ip']}"
+        for i in ingresos
+    ]
+    seleccion = st.selectbox("Selecciona un ingreso", opciones)
 else:
-    st.info("⚠️ No se encontraron ingresos en MongoDB.")
-
-# === HISTORIAL DE CONSUMOS ===
-with st.expander("📜 Historial de consumos"):
-    data = list(col_consumos.find().sort("fecha", -1))
-    if data:
-        df = pd.DataFrame(data)
-        df["_id"] = df["_id"].astype(str)
-        df["fecha"] = pd.to_datetime(df["fecha"]).dt.tz_convert(tz).dt.strftime("%Y-%m-%d %H:%M:%S")
-        df.index = range(len(df), 0, -1)
-        st.dataframe(df[["fecha"]], use_container_width=True)
-    else:
-        st.info("Sin consumos registrados.")
-
-# === HISTORIAL DE INGRESOS ===
-with st.expander("🧾 Historial de ingresos"):
-    data = list(col_ingresos.find().sort("timestamp", -1))
-    if data:
-        df = pd.DataFrame(data)
-        df["_id"] = df["_id"].astype(str)
-        df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_convert(tz).dt.strftime("%Y-%m-%d %H:%M:%S")
-        df.index = range(len(df), 0, -1)
-        st.dataframe(df[["timestamp", "ip", "ciudad"]], use_container_width=True)
-    else:
-        st.info("Sin ingresos registrados.")
+    st.info("Sin ingresos registrados.")

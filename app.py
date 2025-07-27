@@ -1,89 +1,82 @@
 import streamlit as st
+import pandas as pd
+import pytz
+import requests
 from datetime import datetime
 from pymongo import MongoClient
-import pytz
-import pandas as pd
-import requests
+from streamlit_javascript import st_javascript
 
-# Configuración de la App
-st.set_page_config(page_title="Coca Tracker", layout="centered")
-st.markdown("<h1 style='text-align: center;'>💀 Tiempo sin consumir</h1>", unsafe_allow_html=True)
+# === CONFIGURACIÓN GENERAL ===
+st.set_page_config("💀 Tiempo sin consumir", layout="centered")
+st.title("💀 Tiempo sin consumir")
 
-# Zona horaria
-colombia = pytz.timezone("America/Bogota")
-ahora = datetime.now(tz=colombia)
-
-# Conexión a MongoDB
+# === CONEXIÓN A MONGO ===
 client = MongoClient(st.secrets["mongo_uri"])
 db = client["coca_tracker"]
-coleccion_consumos = db["consumos"]
-coleccion_ingresos = db["ingresos"]
+ingresos = db["ingresos"]
+consumos = db["consumos"]
 
-# Función para obtener IP y ciudad
-def obtener_info_ip():
+# === ZONA HORARIA ===
+tz = pytz.timezone("America/Bogota")
+
+# === FUNCIONES DE IP Y CIUDAD ===
+def obtener_ip_real():
+    return st_javascript("await fetch('https://api.ipify.org?format=json').then(res => res.json()).then(data => data.ip)")
+
+def obtener_ciudad(ip):
     try:
-        r = requests.get("https://ipinfo.io/json", timeout=5)
-        data = r.json()
-        return data.get("ip", ""), data.get("city", "")
+        r = requests.get(f"https://ipapi.co/{ip}/json/")
+        return r.json().get("city", "Desconocida")
     except:
-        return "", ""
+        return "Desconocida"
 
-# Registrar ingreso si no se ha registrado aún
-if "ingreso_registrado" not in st.session_state:
-    ip, ciudad = obtener_info_ip()
-    coleccion_ingresos.insert_one({
-        "timestamp": ahora,
-        "ip": ip,
-        "ciudad": ciudad
-    })
-    st.session_state["ingreso_registrado"] = True
+# === REGISTRAR INGRESO A LA APP ===
+def registrar_ingreso():
+    ip = obtener_ip_real()
+    ciudad = obtener_ciudad(ip)
+    ahora = datetime.now(tz)
+    ingresos.insert_one({"timestamp": ahora, "ip": ip, "ciudad": ciudad})
+    return ahora
 
-# Obtener primer ingreso absoluto
-primer_ingreso = coleccion_ingresos.find_one(sort=[("timestamp", 1)])
-if primer_ingreso and "timestamp" in primer_ingreso:
-    inicio = primer_ingreso["timestamp"].astimezone(colombia)
-else:
-    inicio = ahora  # fallback
+# === TIEMPO DESDE EL PRIMER INGRESO ===
+def calcular_tiempo_desde_ultimo_consumo():
+    primer_ingreso = ingresos.find_one(sort=[("timestamp", 1)])
+    ultimo_consumo = consumos.find_one(sort=[("timestamp", -1)])
+    if not primer_ingreso:
+        return "00:00:00"
+    inicio = primer_ingreso["timestamp"]
+    if ultimo_consumo and ultimo_consumo["timestamp"] > inicio:
+        inicio = ultimo_consumo["timestamp"]
+    ahora = datetime.now(tz)
+    duracion = ahora - inicio
+    return str(duracion).split(".")[0]
 
-# Obtener último consumo (si existe)
-ultimo_consumo = coleccion_consumos.find_one(sort=[("timestamp", -1)])
-if ultimo_consumo and "timestamp" in ultimo_consumo:
-    inicio = max(inicio, ultimo_consumo["timestamp"].astimezone(colombia))
+# === REGISTRAR CONSUMO ===
+def registrar_consumo():
+    ahora = datetime.now(tz)
+    consumos.insert_one({"timestamp": ahora})
 
-# Calcular tiempo transcurrido
-diferencia = ahora - inicio
-horas, resto = divmod(diferencia.seconds, 3600)
-minutos, segundos = divmod(resto, 60)
-tiempo_transcurrido = f"{diferencia.days*24 + horas:02}:{minutos:02}:{segundos:02}"
-
-# Pestañas
+# === INTERFAZ STREAMLIT ===
 tabs = st.tabs(["🕰 Cronómetro", "📜 Historial de ingresos"])
 
-# Sección Cronómetro
 with tabs[0]:
     if st.button("💀 Registrar consumo"):
-        coleccion_consumos.insert_one({"timestamp": ahora})
+        registrar_consumo()
         st.rerun()
-    st.markdown(f"⏳ **{tiempo_transcurrido}**")
 
-# Sección Historial
+    st.markdown("⏳ **" + calcular_tiempo_desde_ultimo_consumo() + "**")
+
 with tabs[1]:
-    st.subheader("📜 Ingresos a la App")
-    registros = list(coleccion_ingresos.find().sort("timestamp", -1))
-
-    if registros:
-        data = []
-        for i, r in enumerate(registros, start=1):
-            timestamp = r.get("timestamp")
-            ts_local = timestamp.astimezone(colombia).strftime("%Y-%m-%d %H:%M:%S") if timestamp else "—"
-            data.append({
-                "N°": len(registros) - i + 1,
-                "Fecha y hora": ts_local,
-                "IP": r.get("ip", ""),
-                "Ciudad": r.get("ciudad", "")
-            })
-
-        df_registros = pd.DataFrame(data)
-        st.dataframe(df_registros, use_container_width=True)
+    data = list(ingresos.find().sort("timestamp", -1))
+    if not data:
+        st.info("Aún no hay registros de ingreso.")
     else:
-        st.info("Aún no hay ingresos registrados.")
+        df = pd.DataFrame(data)
+        df["Fecha y hora"] = df["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        df = df[["Fecha y hora", "ip", "ciudad"]]
+        st.dataframe(df, use_container_width=True)
+
+# === REGISTRO AUTOMÁTICO DE INGRESO ===
+if "registrado" not in st.session_state:
+    registrar_ingreso()
+    st.session_state.registrado = True

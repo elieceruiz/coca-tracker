@@ -7,7 +7,7 @@ import pandas as pd
 from pymongo import MongoClient
 from streamlit_javascript import st_javascript
 
-# === CONFIGURACIÓN GENERAL ===
+# === CONFIGURACIÓN ===
 st.set_page_config("⏱ Tiempo sin consumir", layout="centered")
 st.title("💀 Tiempo sin consumir")
 tz = pytz.timezone("America/Bogota")
@@ -18,7 +18,7 @@ db = client["coca_tracker"]
 col_consumos = db["consumos"]
 col_ingresos = db["ingresos"]
 
-# === FUNCIONES PARA IP Y CIUDAD ===
+# === FUNCIONES DE IP Y CIUDAD ===
 def obtener_ip_navegador():
     js_code = "await fetch('https://api64.ipify.org?format=json').then(res => res.json()).then(data => data.ip)"
     return st_javascript(js_code=js_code, key="ip_nav")
@@ -30,7 +30,7 @@ def obtener_ciudad(ip):
     except:
         return "CIUDAD_DESCONOCIDA"
 
-# === FUNCIÓN FECHA BASE PARA CRONÓMETRO ===
+# === FUNCIÓN PARA OBTENER FECHA BASE ===
 def obtener_fecha_base():
     ultimo = col_consumos.find_one(sort=[("fecha", -1)])
     if ultimo:
@@ -52,12 +52,12 @@ def mostrar_cronometro(base):
     time.sleep(1)
     st.rerun()
 
-# === BOTÓN: REGISTRAR CONSUMO ===
+# === REGISTRAR CONSUMO ===
 if st.button("💀 Registrar consumo"):
     col_consumos.insert_one({"fecha": datetime.now(tz)})
     st.error("☠️ Consumo registrado.")
 
-# === REGISTRAR INGRESO – SI NO ESTÁ REGISTRADO EN LA SESIÓN ===
+# === REGISTRAR INGRESO (PRIMERA VEZ EN SESIÓN) ===
 if "ingreso_registrado" not in st.session_state:
     ip_real = obtener_ip_navegador()
     if ip_real:
@@ -77,6 +77,14 @@ if base:
     mostrar_cronometro(base)
 else:
     st.warning("Aún no hay ingresos ni consumos registrados.")
+
+# === DEBUG TEMPORAL DE INGRESOS ===
+debug_data = list(col_ingresos.find().sort("timestamp", -1))
+if debug_data:
+    st.write("🔎 Debug de ingresos:")
+    st.json(debug_data)
+else:
+    st.info("⚠️ No se encontraron ingresos en MongoDB.")
 
 # === HISTORIAL DE CONSUMOS ===
 with st.expander("📜 Historial de consumos"):

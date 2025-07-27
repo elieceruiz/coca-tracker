@@ -24,13 +24,15 @@ def obtener_ip():
     except:
         return "IP_DESCONOCIDA"
 
-# === REGISTRAR INGRESO (cada vez que se abre la App) ===
-ip_actual = obtener_ip()
-col_ingresos.insert_one({
-    "ip": ip_actual,
-    "fecha": datetime.now(tz)
-})
-st.write("Ingreso registrado con IP:", ip_actual)
+# === REGISTRAR INGRESO (solo una vez por sesión) ===
+if "ingreso_registrado" not in st.session_state:
+    ip_actual = obtener_ip()
+    col_ingresos.insert_one({
+        "ip": ip_actual,
+        "fecha": datetime.now(tz)
+    })
+    st.session_state["ingreso_registrado"] = True
+    st.write(f"Ingreso registrado con IP: {ip_actual}")
 
 # === REGISTRAR CONSUMO ===
 if st.button("💀 Registrar consumo"):
@@ -67,7 +69,7 @@ else:
     st.warning("No hay registros aún. Ingresá o registrá consumo.")
 
 # === HISTORIAL DE CONSUMOS ===
-with st.expander("📜 Historial de consumos"):
+with st.expander("📜 Historial de consumos", expanded=True):
     registros = list(col_consumos.find().sort("fecha", -1))
     if registros:
         df = pd.DataFrame(registros)
@@ -79,7 +81,7 @@ with st.expander("📜 Historial de consumos"):
         st.info("Sin consumos registrados.")
 
 # === HISTORIAL DE INGRESOS ===
-with st.expander("🧾 Ingresos a la App"):
+with st.expander("🧾 Ingresos a la App", expanded=True):
     ingresos = list(col_ingresos.find().sort("fecha", -1))
     if ingresos:
         df_ing = pd.DataFrame(ingresos)

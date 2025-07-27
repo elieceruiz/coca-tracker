@@ -6,42 +6,40 @@ import requests
 from pymongo import MongoClient
 import pandas as pd
 
-# === CONFIG ===
+# === CONFIGURACIÓN DE LA APP ===
 st.set_page_config("⏱ Tiempo sin consumir", layout="centered")
 st.title("💀 Tiempo sin consumir")
 tz = pytz.timezone("America/Bogota")
 
-# === MONGO ===
+# === CONEXIÓN A MONGODB ===
 client = MongoClient(st.secrets["mongo_uri"])
 db = client["coca_tracker"]
 col_consumos = db["consumos"]
 col_ingresos = db["ingresos"]
 
-# === IP ===
+# === FUNCIÓN PARA OBTENER IP ===
 def obtener_ip():
     try:
         return requests.get("https://api.ipify.org").text.strip()
     except:
         return "IP_DESCONOCIDA"
 
-# === REGISTRAR INGRESO (solo una vez por sesión) ===
+# === REGISTRAR INGRESO (SOLO UNA VEZ POR SESIÓN) ===
 if "ingreso_registrado" not in st.session_state:
-    ip_actual = obtener_ip()
     col_ingresos.insert_one({
-        "ip": ip_actual,
+        "ip": obtener_ip(),
         "fecha": datetime.now(tz)
     })
     st.session_state["ingreso_registrado"] = True
-    st.write(f"Ingreso registrado con IP: {ip_actual}")
 
-# === REGISTRAR CONSUMO ===
+# === BOTÓN PARA REGISTRAR CONSUMO ===
 if st.button("💀 Registrar consumo"):
     col_consumos.insert_one({
         "fecha": datetime.now(tz)
     })
     st.error("☠️ Consumo registrado.")
 
-# === FECHA BASE ===
+# === OBTENER FECHA BASE PARA EL CRONÓMETRO ===
 def obtener_fecha_base():
     ultimo_consumo = col_consumos.find_one(sort=[("fecha", -1)])
     if ultimo_consumo:
@@ -51,7 +49,7 @@ def obtener_fecha_base():
         return primer_ingreso["fecha"]
     return None
 
-# === CRONÓMETRO ===
+# === MOSTRAR CRONÓMETRO EN TIEMPO REAL ===
 fecha_base = obtener_fecha_base()
 if fecha_base:
     fecha_base = fecha_base.astimezone(tz)
@@ -69,7 +67,7 @@ else:
     st.warning("No hay registros aún. Ingresá o registrá consumo.")
 
 # === HISTORIAL DE CONSUMOS ===
-with st.expander("📜 Historial de consumos", expanded=True):
+with st.expander("📜 Historial de consumos"):
     registros = list(col_consumos.find().sort("fecha", -1))
     if registros:
         df = pd.DataFrame(registros)
@@ -81,7 +79,7 @@ with st.expander("📜 Historial de consumos", expanded=True):
         st.info("Sin consumos registrados.")
 
 # === HISTORIAL DE INGRESOS ===
-with st.expander("🧾 Ingresos a la App", expanded=True):
+with st.expander("🧾 Ingresos a la App"):
     ingresos = list(col_ingresos.find().sort("fecha", -1))
     if ingresos:
         df_ing = pd.DataFrame(ingresos)

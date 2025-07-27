@@ -6,40 +6,41 @@ import requests
 from pymongo import MongoClient
 import pandas as pd
 
-# === CONFIGURACIÓN DE LA APP ===
+# === CONFIG ===
 st.set_page_config("⏱ Tiempo sin consumir", layout="centered")
 st.title("💀 Tiempo sin consumir")
 tz = pytz.timezone("America/Bogota")
 
-# === CONEXIÓN A MONGODB ===
+# === MONGO ===
 client = MongoClient(st.secrets["mongo_uri"])
 db = client["coca_tracker"]
 col_consumos = db["consumos"]
 col_ingresos = db["ingresos"]
 
-# === FUNCIÓN PARA OBTENER IP ===
+# === IP ===
 def obtener_ip():
     try:
         return requests.get("https://api.ipify.org").text.strip()
     except:
         return "IP_DESCONOCIDA"
 
-# === REGISTRAR INGRESO (SOLO UNA VEZ POR SESIÓN) ===
+# === REGISTRAR INGRESO (solo una vez por sesión) ===
 if "ingreso_registrado" not in st.session_state:
     col_ingresos.insert_one({
         "ip": obtener_ip(),
         "fecha": datetime.now(tz)
     })
     st.session_state["ingreso_registrado"] = True
+    st.caption(f"Ingreso registrado con IP: {obtener_ip()}")
 
-# === BOTÓN PARA REGISTRAR CONSUMO ===
+# === REGISTRAR CONSUMO ===
 if st.button("💀 Registrar consumo"):
     col_consumos.insert_one({
         "fecha": datetime.now(tz)
     })
     st.error("☠️ Consumo registrado.")
 
-# === OBTENER FECHA BASE PARA EL CRONÓMETRO ===
+# === FECHA BASE ===
 def obtener_fecha_base():
     ultimo_consumo = col_consumos.find_one(sort=[("fecha", -1)])
     if ultimo_consumo:
@@ -49,7 +50,7 @@ def obtener_fecha_base():
         return primer_ingreso["fecha"]
     return None
 
-# === MOSTRAR CRONÓMETRO EN TIEMPO REAL ===
+# === CRONÓMETRO ===
 fecha_base = obtener_fecha_base()
 if fecha_base:
     fecha_base = fecha_base.astimezone(tz)
@@ -61,8 +62,6 @@ if fecha_base:
     segundos_restantes = segundos % 60
 
     st.metric("⏳ Tiempo transcurrido", f"{horas:02}:{minutos:02}:{segundos_restantes:02}")
-    time.sleep(1)
-    st.rerun()
 else:
     st.warning("No hay registros aún. Ingresá o registrá consumo.")
 
@@ -89,3 +88,7 @@ with st.expander("🧾 Ingresos a la App"):
         st.dataframe(df_ing[["fecha", "ip"]], use_container_width=True)
     else:
         st.info("Sin ingresos registrados.")
+
+# === REFRESCO FINAL PARA EL CRONÓMETRO ===
+time.sleep(1)
+st.rerun()

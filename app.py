@@ -7,18 +7,18 @@ import pandas as pd
 from pymongo import MongoClient
 from streamlit_javascript import st_javascript
 
-# === CONFIGURACIÓN ===
+# === CONFIG ===
 st.set_page_config("⏱ Tiempo sin consumir", layout="centered")
 st.title("💀 Tiempo sin consumir")
 tz = pytz.timezone("America/Bogota")
 
-# === CONEXIÓN A MONGO ===
+# === MONGO CONNECTION ===
 client = MongoClient(st.secrets["mongo_uri"])
 db = client["coca_tracker"]
 col_consumos = db["consumos"]
 col_ingresos = db["ingresos"]
 
-# === FUNCIONES DE IP Y CIUDAD ===
+# === FUNCIONES IP y ciudad ===
 def obtener_ip_navegador():
     js_code = "await fetch('https://api64.ipify.org?format=json').then(res => res.json()).then(data => data.ip)"
     return st_javascript(js_code=js_code, key="ip_nav")
@@ -30,7 +30,7 @@ def obtener_ciudad(ip):
     except:
         return "CIUDAD_DESCONOCIDA"
 
-# === FUNCIÓN PARA OBTENER FECHA BASE ===
+# === BASE para cronómetro ===
 def obtener_fecha_base():
     ultimo = col_consumos.find_one(sort=[("fecha", -1)])
     if ultimo:
@@ -52,12 +52,12 @@ def mostrar_cronometro(base):
     time.sleep(1)
     st.rerun()
 
-# === REGISTRAR CONSUMO ===
+# === Registrar consumo ===
 if st.button("💀 Registrar consumo"):
     col_consumos.insert_one({"fecha": datetime.now(tz)})
     st.error("☠️ Consumo registrado.")
 
-# === REGISTRAR INGRESO ===
+# === Registrar ingreso si es la primera vez ===
 if "ingreso_registrado" not in st.session_state:
     ip_real = obtener_ip_navegador()
     if ip_real:
@@ -70,7 +70,7 @@ if "ingreso_registrado" not in st.session_state:
         st.success(f"Ingreso registrado desde {ciudad} ({ip_real})")
         st.session_state["ingreso_registrado"] = True
 
-# === MOSTRAR CRONÓMETRO ===
+# === Mostrar cronómetro si hay base ===
 base = obtener_fecha_base()
 if base:
     base = base.astimezone(tz)
@@ -78,14 +78,14 @@ if base:
 else:
     st.warning("Aún no hay ingresos ni consumos registrados.")
 
-# === HISTORIAL DE INGRESOS – SELECTBOX ===
-st.subheader("🧾 Ver un ingreso registrado")
+# === HISTORIAL DE INGRESOS (LISTA COMPLETA) ===
+st.markdown("## 🧾 Historial completo de ingresos")
 ingresos = list(col_ingresos.find().sort("timestamp", -1))
 if ingresos:
-    opciones = [
-        f"{i['timestamp'].astimezone(tz).strftime('%Y-%m-%d %H:%M:%S')} – {i['ciudad']} – {i['ip']}"
-        for i in ingresos
-    ]
-    seleccion = st.selectbox("Selecciona un ingreso", opciones)
+    df = pd.DataFrame(ingresos)
+    df["_id"] = df["_id"].astype(str)
+    df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_convert(tz).dt.strftime("%Y-%m-%d %H:%M:%S")
+    df.index = range(len(df), 0, -1)  # Enumeración descendente
+    st.dataframe(df[["timestamp", "ip", "ciudad"]], use_container_width=True)
 else:
     st.info("Sin ingresos registrados.")

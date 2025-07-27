@@ -17,17 +17,29 @@ db = client["coca_tracker"]
 col_consumos = db["consumos"]
 col_ingresos = db["ingresos"]
 
-# === IP PÚBLICA ===
-def obtener_ip():
+# === OBTENER IP Y UBICACIÓN ===
+def obtener_datos_ubicacion():
     try:
-        return requests.get("https://api.ipify.org").text.strip()
+        res = requests.get("http://ip-api.com/json/").json()
+        return {
+            "ip": res.get("query", "IP_DESCONOCIDA"),
+            "ciudad": res.get("city", "CIUDAD_DESCONOCIDA"),
+            "pais": res.get("country", "PAIS_DESCONOCIDO")
+        }
     except:
-        return "IP_DESCONOCIDA"
+        return {
+            "ip": "IP_DESCONOCIDA",
+            "ciudad": "CIUDAD_DESCONOCIDA",
+            "pais": "PAIS_DESCONOCIDO"
+        }
 
 # === REGISTRAR INGRESO (solo una vez por sesión) ===
 if "ingreso_registrado" not in st.session_state:
+    datos = obtener_datos_ubicacion()
     col_ingresos.insert_one({
-        "ip": obtener_ip(),
+        "ip": datos["ip"],
+        "ciudad": datos["ciudad"],
+        "pais": datos["pais"],
         "fecha": datetime.now(tz)
     })
     st.session_state["ingreso_registrado"] = True
@@ -38,32 +50,31 @@ if st.button("💀 Registrar consumo"):
         "fecha": datetime.now(tz)
     })
     st.error("☠️ Consumo registrado.")
-    st.rerun()
 
 # === FECHA BASE ===
 def obtener_fecha_base():
     ultimo_consumo = col_consumos.find_one(sort=[("fecha", -1)])
     if ultimo_consumo:
-        return ultimo_consumo["fecha"]
+        return ultimo_consumo["fecha"].astimezone(tz)
     primer_ingreso = col_ingresos.find_one(sort=[("fecha", 1)])
     if primer_ingreso:
-        return primer_ingreso["fecha"]
+        return primer_ingreso["fecha"].astimezone(tz)
     return None
 
 # === CRONÓMETRO ===
 fecha_base = obtener_fecha_base()
 if fecha_base:
-    fecha_base = fecha_base.astimezone(tz)
-    ahora = datetime.now(tz)
-    delta = ahora - fecha_base
-    segundos = int(delta.total_seconds())
-    horas = segundos // 3600
-    minutos = (segundos % 3600) // 60
-    segundos_restantes = segundos % 60
-
-    st.metric("⏳ Tiempo transcurrido", f"{horas:02}:{minutos:02}:{segundos_restantes:02}")
-    time.sleep(1)
-    st.rerun()
+    marcador = st.empty()
+    while True:
+        ahora = datetime.now(tz)
+        delta = ahora - fecha_base
+        segundos = int(delta.total_seconds())
+        horas = segundos // 3600
+        minutos = (segundos % 3600) // 60
+        segundos_restantes = segundos % 60
+        marcador.metric("⏳ Tiempo transcurrido", f"{horas:02}:{minutos:02}:{segundos_restantes:02}")
+        time.sleep(1)
+        st.rerun()
 else:
     st.warning("No hay registros aún. Ingresá o registrá consumo.")
 
@@ -87,6 +98,6 @@ with st.expander("🧾 Ingresos a la App"):
         df_ing["_id"] = df_ing["_id"].astype(str)
         df_ing["fecha"] = pd.to_datetime(df_ing["fecha"]).dt.tz_convert(tz).dt.strftime("%Y-%m-%d %H:%M:%S")
         df_ing.index = range(len(df_ing), 0, -1)
-        st.dataframe(df_ing[["fecha", "ip"]], use_container_width=True)
+        st.dataframe(df_ing[["fecha", "ip", "ciudad", "pais"]], use_container_width=True)
     else:
         st.info("Sin ingresos registrados.")

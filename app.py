@@ -17,7 +17,7 @@ db = client["coca_tracker"]
 col_consumos = db["consumos"]
 col_ingresos = db["ingresos"]
 
-# === IP ===
+# === IP PÚBLICA ===
 def obtener_ip():
     try:
         return requests.get("https://api.ipify.org").text.strip()
@@ -31,7 +31,6 @@ if "ingreso_registrado" not in st.session_state:
         "fecha": datetime.now(tz)
     })
     st.session_state["ingreso_registrado"] = True
-    st.write(f"Ingreso registrado con IP: {st.session_state['ingreso_registrado']}")
 
 # === REGISTRAR CONSUMO ===
 if st.button("💀 Registrar consumo"):
@@ -39,6 +38,7 @@ if st.button("💀 Registrar consumo"):
         "fecha": datetime.now(tz)
     })
     st.error("☠️ Consumo registrado.")
+    st.rerun()
 
 # === FECHA BASE ===
 def obtener_fecha_base():
@@ -61,8 +61,7 @@ if fecha_base:
     minutos = (segundos % 3600) // 60
     segundos_restantes = segundos % 60
 
-    st.markdown("⏳ **Tiempo transcurrido**")
-    st.markdown(f"### {horas:02}:{minutos:02}:{segundos_restantes:02}")
+    st.metric("⏳ Tiempo transcurrido", f"{horas:02}:{minutos:02}:{segundos_restantes:02}")
     time.sleep(1)
     st.rerun()
 else:
@@ -86,7 +85,7 @@ with st.expander("🧾 Ingresos a la App"):
     if ingresos:
         df_ing = pd.DataFrame(ingresos)
         df_ing["_id"] = df_ing["_id"].astype(str)
-        df_ing["fecha"] = pd.to_datetime(df_ing["fecha"]).dt.tz_localize("UTC").dt.tz_convert(tz).dt.strftime("%Y-%m-%d %H:%M:%S")
+        df_ing["fecha"] = pd.to_datetime(df_ing["fecha"]).dt.tz_convert(tz).dt.strftime("%Y-%m-%d %H:%M:%S")
         df_ing.index = range(len(df_ing), 0, -1)
         st.dataframe(df_ing[["fecha", "ip"]], use_container_width=True)
     else:

@@ -1,6 +1,6 @@
 streamlit
 pymongo
-pytz
 requests
 pandas
+pytz
 streamlit-javascript

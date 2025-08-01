@@ -7,18 +7,24 @@ import pandas as pd
 from pymongo import MongoClient
 from streamlit_javascript import st_javascript
 from dateutil.parser import parse
+from bson.objectid import ObjectId
 
 # === CONFIG ===
 st.set_page_config(page_title="📸 Registro de Azúcar", layout="centered")
-st.title("📸 Registro de Azúcar")
 tz = pytz.timezone("America/Bogota")
+st.title("📸 Registro de Azúcar")
+
+# === RECARGA SUAVE SI SE ACABA DE REGISTRAR ===
+if st.query_params.get("refrescar"):
+    st.experimental_set_query_params()
+    st.rerun()
 
 # === CONEXIÓN A MONGO ===
 client = MongoClient(st.secrets["mongo_uri"])
 db = client["registro_azucar"]
 col_consumos = db["consumos"]
 
-# === FUNCIONES ===
+# === FUNCIONES IP Y CIUDAD ===
 def obtener_ip_navegador():
     js_code = "await fetch('https://api64.ipify.org?format=json').then(res => res.json()).then(data => data.ip)"
     return st_javascript(js_code=js_code, key="ip_nav")
@@ -30,6 +36,7 @@ def obtener_ciudad(ip):
     except:
         return "CIUDAD_DESCONOCIDA"
 
+# === CRONÓMETRO DE RACHA ===
 def mostrar_racha(fecha_ultima):
     ahora = datetime.now(pytz.utc)
     if fecha_ultima.tzinfo is None:
@@ -43,16 +50,18 @@ def mostrar_racha(fecha_ultima):
     time.sleep(1)
     st.rerun()
 
+# === BARRA DE PROGRESO HACIA METAS ===
+def mostrar_barra_progreso(fecha_ultima):
+    ahora = datetime.now(pytz.utc)
+    delta = ahora - fecha_ultima
+    dias = delta.total_seconds() / 86400
+    record = 21
+    porcentaje = min(dias / record, 1.0)
+    st.progress(porcentaje, text=f"🌱 Progreso hacia 21 días sin consumir: {dias:.1f} días")
+
 # === FORMULARIO DE REGISTRO ===
 st.subheader("🍭 Nuevo consumo de azúcar")
-
-# HTML puro para evitar doble tap en móviles compatibles
-st.markdown("""
-<label for="file_input" style="font-weight:bold">📷 Sube una foto del producto:</label><br>
-<input type="file" accept="image/*" capture="environment" id="file_input" style="margin-top:8px;margin-bottom:10px;">
-""", unsafe_allow_html=True)
-
-foto = st.file_uploader("📁 También puedes seleccionar desde archivos", type=["jpg", "jpeg", "png"])
+foto = st.file_uploader("📷 Sube una foto del producto", type=["jpg", "jpeg", "png"])
 comentario = st.text_input("📝 Comentario (opcional)")
 
 if st.button("💀 Registrar consumo"):
@@ -67,30 +76,45 @@ if st.button("💀 Registrar consumo"):
             "foto_nombre": foto.name,
             "foto_bytes": foto.getvalue()
         })
-        st.success(f"☠️ Consumo registrado desde {ciudad}")
-        st.write("✅ DEBUG: Registro guardado en Mongo:", fecha_actual.isoformat())
-        st.rerun()
+        st.success(f"☠️ Consumo registrado desde {ciudad} a las {fecha_actual.astimezone(tz).strftime('%H:%M:%S')}")
+        st.balloons()
+        st.experimental_set_query_params(refrescar="1")
+        st.stop()
     else:
         st.error("⚠️ Debes subir una foto para registrar el consumo.")
 
-# === RACHA EN TIEMPO REAL ===
+# === CALCULAR RACHA Y MOSTRAR ===
 ultimo = col_consumos.find_one(sort=[("fecha", -1)])
 if ultimo:
     fecha_ultima = ultimo["fecha"]
     if isinstance(fecha_ultima, str):
         fecha_ultima = parse(fecha_ultima)
     mostrar_racha(fecha_ultima)
+    mostrar_barra_progreso(fecha_ultima)
 
-# === HISTORIAL ===
-st.markdown("## 🧾 Historial de consumos")
+# === ESTADÍSTICA DEL MES ===
+st.markdown("### 📊 Estadísticas del mes actual")
+hoy = datetime.now(tz)
+inicio_mes = datetime(hoy.year, hoy.month, 1, tzinfo=tz)
+consumos_mes = col_consumos.count_documents({"fecha": {"$gte": inicio_mes.astimezone(pytz.utc)}})
+st.info(f"🍬 Has registrado **{consumos_mes} consumo(s)** en agosto.")
+
+# === HISTORIAL CON BOTONES DE BORRADO ===
+st.markdown("---\n## 📷 Registros anteriores")
 consumos = list(col_consumos.find().sort("fecha", -1))
 if consumos:
     for idx, doc in enumerate(consumos, 1):
+        st.markdown(f"### {idx}. {doc.get('comentario', 'Sin comentario')}")
+        st.image(doc["foto_bytes"], caption=f"{doc['foto_nombre']} - {doc['ciudad']}", width=300)
         fecha_str = doc["fecha"]
         if isinstance(fecha_str, str):
             fecha_str = parse(fecha_str)
         fecha_local = fecha_str.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
-        st.markdown(f"### {idx}. {doc.get('comentario', 'Sin comentario')}")
-        st.image(doc["foto_bytes"], caption=f"{doc['foto_nombre']} - {doc['ciudad']} - {fecha_local}", use_column_width=True)
+        st.markdown(f"📅 {fecha_local}")
+        borrar = st.button(f"🗑 Eliminar este registro", key=str(doc["_id"]))
+        if borrar:
+            col_consumos.delete_one({"_id": ObjectId(doc["_id"])})
+            st.warning("Registro eliminado.")
+            st.experimental_rerun()
 else:
     st.info("No hay consumos registrados aún.")

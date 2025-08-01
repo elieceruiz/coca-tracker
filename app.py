@@ -6,6 +6,7 @@ import requests
 import pandas as pd
 from pymongo import MongoClient
 from streamlit_javascript import st_javascript
+from dateutil.parser import parse  # ✅ Para convertir string a datetime
 
 # === CONFIGURACIÓN GENERAL ===
 st.set_page_config(page_title="📸 Registro de Azúcar", layout="centered")
@@ -67,7 +68,12 @@ if enviar:
 # === RACHA EN TIEMPO REAL ===
 ultimo = col_consumos.find_one(sort=[("fecha", -1)])
 if ultimo:
-    mostrar_racha(ultimo["fecha"])
+    fecha_ultima = ultimo["fecha"]
+    if isinstance(fecha_ultima, str):
+        fecha_ultima = parse(fecha_ultima)
+    if fecha_ultima.tzinfo is None:
+        fecha_ultima = tz.localize(fecha_ultima)
+    mostrar_racha(fecha_ultima)
 
 # === HISTORIAL DE CONSUMOS ===
 st.markdown("## 🧾 Historial de consumos")
@@ -75,6 +81,6 @@ consumos = list(col_consumos.find().sort("fecha", -1))
 if consumos:
     for idx, doc in enumerate(consumos, 1):
         st.markdown(f"### {idx}. {doc.get('comentario', 'Sin comentario')}")
-        st.image(doc["foto_bytes"], caption=f"{doc['foto_nombre']} - {doc['ciudad']} - {doc['fecha'].astimezone(tz).strftime('%Y-%m-%d %H:%M:%S')}", use_column_width=True)
+        st.image(doc["foto_bytes"], caption=f"{doc['foto_nombre']} - {doc['ciudad']} - {doc['fecha']}", use_column_width=True)
 else:
     st.info("No hay consumos registrados aún.")

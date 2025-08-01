@@ -6,9 +6,9 @@ import requests
 import pandas as pd
 from pymongo import MongoClient
 from streamlit_javascript import st_javascript
-from dateutil.parser import parse  # ✅ Para convertir string a datetime
+from dateutil.parser import parse
 
-# === CONFIGURACIÓN GENERAL ===
+# === CONFIG ===
 st.set_page_config(page_title="📸 Registro de Azúcar", layout="centered")
 st.title("📸 Registro de Azúcar")
 tz = pytz.timezone("America/Bogota")
@@ -18,7 +18,7 @@ client = MongoClient(st.secrets["mongo_uri"])
 db = client["registro_azucar"]
 col_consumos = db["consumos"]
 
-# === FUNCIONES PARA IP Y CIUDAD ===
+# === FUNCIONES ===
 def obtener_ip_navegador():
     js_code = "await fetch('https://api64.ipify.org?format=json').then(res => res.json()).then(data => data.ip)"
     return st_javascript(js_code=js_code, key="ip_nav")
@@ -30,9 +30,10 @@ def obtener_ciudad(ip):
     except:
         return "CIUDAD_DESCONOCIDA"
 
-# === CRONÓMETRO DE RACHA ===
 def mostrar_racha(fecha_ultima):
-    ahora = datetime.now(tz)
+    ahora = datetime.now(pytz.utc)
+    if fecha_ultima.tzinfo is None:
+        fecha_ultima = pytz.utc.localize(fecha_ultima)
     delta = ahora - fecha_ultima
     total_segundos = int(delta.total_seconds())
     horas = total_segundos // 3600
@@ -42,25 +43,32 @@ def mostrar_racha(fecha_ultima):
     time.sleep(1)
     st.rerun()
 
-# === SECCIÓN DE REGISTRO ===
+# === FORMULARIO DE REGISTRO ===
 st.subheader("🍭 Nuevo consumo de azúcar")
-with st.form("form_consumo"):
-    foto = st.file_uploader("📷 Sube una foto del producto", type=["jpg", "jpeg", "png"])
-    comentario = st.text_input("📝 Comentario (opcional)")
-    enviar = st.form_submit_button("💀 Registrar consumo")
 
-if enviar:
+# HTML puro para evitar doble tap en móviles compatibles
+st.markdown("""
+<label for="file_input" style="font-weight:bold">📷 Sube una foto del producto:</label><br>
+<input type="file" accept="image/*" capture="environment" id="file_input" style="margin-top:8px;margin-bottom:10px;">
+""", unsafe_allow_html=True)
+
+foto = st.file_uploader("📁 También puedes seleccionar desde archivos", type=["jpg", "jpeg", "png"])
+comentario = st.text_input("📝 Comentario (opcional)")
+
+if st.button("💀 Registrar consumo"):
     if foto:
         ip_real = obtener_ip_navegador()
         ciudad = obtener_ciudad(ip_real) if ip_real else "CIUDAD_DESCONOCIDA"
+        fecha_actual = datetime.now(pytz.utc)
         col_consumos.insert_one({
-            "fecha": datetime.now(tz),
+            "fecha": fecha_actual,
             "comentario": comentario,
             "ciudad": ciudad,
             "foto_nombre": foto.name,
             "foto_bytes": foto.getvalue()
         })
         st.success(f"☠️ Consumo registrado desde {ciudad}")
+        st.write("✅ DEBUG: Registro guardado en Mongo:", fecha_actual.isoformat())
         st.rerun()
     else:
         st.error("⚠️ Debes subir una foto para registrar el consumo.")
@@ -71,16 +79,18 @@ if ultimo:
     fecha_ultima = ultimo["fecha"]
     if isinstance(fecha_ultima, str):
         fecha_ultima = parse(fecha_ultima)
-    if fecha_ultima.tzinfo is None:
-        fecha_ultima = tz.localize(fecha_ultima)
     mostrar_racha(fecha_ultima)
 
-# === HISTORIAL DE CONSUMOS ===
+# === HISTORIAL ===
 st.markdown("## 🧾 Historial de consumos")
 consumos = list(col_consumos.find().sort("fecha", -1))
 if consumos:
     for idx, doc in enumerate(consumos, 1):
+        fecha_str = doc["fecha"]
+        if isinstance(fecha_str, str):
+            fecha_str = parse(fecha_str)
+        fecha_local = fecha_str.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
         st.markdown(f"### {idx}. {doc.get('comentario', 'Sin comentario')}")
-        st.image(doc["foto_bytes"], caption=f"{doc['foto_nombre']} - {doc['ciudad']} - {doc['fecha']}", use_column_width=True)
+        st.image(doc["foto_bytes"], caption=f"{doc['foto_nombre']} - {doc['ciudad']} - {fecha_local}", use_column_width=True)
 else:
     st.info("No hay consumos registrados aún.")

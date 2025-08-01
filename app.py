@@ -3,7 +3,6 @@ from datetime import datetime
 import pytz
 import time
 import requests
-import pandas as pd
 from pymongo import MongoClient
 from streamlit_javascript import st_javascript
 from dateutil.parser import parse
@@ -41,40 +40,32 @@ def obtener_ciudad(ip):
 if "ingreso_registrado" not in st.session_state:
     ip_real = obtener_ip_navegador()
     ciudad = obtener_ciudad(ip_real) if ip_real else "CIUDAD_DESCONOCIDA"
+    fecha_ingreso = datetime.now(pytz.utc)
     col_ingresos.insert_one({
-        "timestamp": datetime.now(pytz.utc),
+        "timestamp": fecha_ingreso,
         "ip": ip_real,
         "ciudad": ciudad
     })
-    st.session_state["ingreso_registrado"] = True
-    st.success(f"📍 Ingreso registrado desde {ciudad}")
+    st.session_state["ingreso_registrado"] = {
+        "ciudad": ciudad,
+        "fecha": fecha_ingreso
+    }
 
-# === HISTORIAL DE CONSUMOS (AL INICIO) ===
-st.markdown("## 📷 Registros anteriores")
-consumos = list(col_consumos.find().sort("fecha", -1))
-if consumos:
-    for idx, doc in enumerate(consumos, 1):
-        st.markdown(f"### {idx}. {doc.get('comentario', 'Sin comentario')}")
-        st.image(doc["foto_bytes"], caption=f"{doc['foto_nombre']} - {doc['ciudad']}", width=300)
-        fecha_str = doc["fecha"]
-        if isinstance(fecha_str, str):
-            fecha_str = parse(fecha_str)
-        fecha_local = fecha_str.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
-        st.markdown(f"📅 {fecha_local}")
-        borrar = st.button(f"🗑 Eliminar este registro", key=str(doc["_id"]))
-        if borrar:
-            col_consumos.delete_one({"_id": ObjectId(doc["_id"])})
-            st.warning("Registro eliminado.")
-            st.experimental_rerun()
-else:
-    st.info("🔍 No hay consumos registrados aún.")
+# Mostrar entrada discreta
+if isinstance(st.session_state["ingreso_registrado"], dict):
+    ingreso = st.session_state["ingreso_registrado"]
+    ciudad = ingreso["ciudad"]
+    local = ingreso["fecha"].astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
+    st.caption(f"📍 Ingresaste desde **{ciudad}** el {local}")
 
-# === CRONÓMETRO DE RACHA ===
-def mostrar_racha(fecha_ultima):
+# === ÚLTIMO CONSUMO Y RACHA ===
+ultimo = col_consumos.find_one(sort=[("fecha", -1)])
+if ultimo:
+    fecha_ultima = ultimo["fecha"]
+    if isinstance(fecha_ultima, str):
+        fecha_ultima = parse(fecha_ultima)
     ahora = datetime.now(pytz.utc)
-    if fecha_ultima.tzinfo is None:
-        fecha_ultima = pytz.utc.localize(fecha_ultima)
-    delta = ahora - fecha_ultima
+    delta = ahora - fecha_ultima if fecha_ultima.tzinfo else ahora - pytz.utc.localize(fecha_ultima)
     total_segundos = int(delta.total_seconds())
     horas = total_segundos // 3600
     minutos = (total_segundos % 3600) // 60
@@ -83,42 +74,36 @@ def mostrar_racha(fecha_ultima):
     time.sleep(1)
     st.rerun()
 
-# === BARRA DE PROGRESO ===
-def mostrar_barra_progreso(fecha_ultima):
-    ahora = datetime.now(pytz.utc)
-    delta = ahora - fecha_ultima
+    # Barra de progreso hacia 21 días
     dias = delta.total_seconds() / 86400
-    record = 21
-    porcentaje = min(dias / record, 1.0)
+    porcentaje = min(dias / 21, 1.0)
     st.progress(porcentaje, text=f"🌱 Progreso hacia 21 días sin consumir: {dias:.1f} días")
 
-# === ÚLTIMO CONSUMO Y RACHA ===
-ultimo = col_consumos.find_one(sort=[("fecha", -1)])
-if ultimo:
-    fecha_ultima = ultimo["fecha"]
-    if isinstance(fecha_ultima, str):
-        fecha_ultima = parse(fecha_ultima)
-    mostrar_racha(fecha_ultima)
-    mostrar_barra_progreso(fecha_ultima)
+# === HISTORIAL CON CHECKBOX PARA CONTRAER ===
+st.markdown("## 📷 Registros anteriores")
 
-# === ESTADÍSTICA DE CONSUMOS DEL MES ===
-st.markdown("### 📊 Consumos este mes")
-hoy = datetime.now(tz)
-inicio_mes = datetime(hoy.year, hoy.month, 1, tzinfo=tz)
-consumos_mes = col_consumos.count_documents({"fecha": {"$gte": inicio_mes.astimezone(pytz.utc)}})
-st.info(f"🍬 Has registrado **{consumos_mes} consumo(s)** en agosto.")
+mostrar_historial = st.checkbox("Mostrar historial completo", value=False)
 
-# === ESTADÍSTICA DE INGRESOS ===
-st.markdown("### 🌐 Ingresos recientes")
-ingresos = list(col_ingresos.find().sort("timestamp", -1).limit(20))
-if ingresos:
-    df = pd.DataFrame(ingresos)
-    df["_id"] = df["_id"].astype(str)
-    df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_convert(tz).dt.strftime("%Y-%m-%d %H:%M:%S")
-    df.index = range(len(df), 0, -1)
-    st.dataframe(df[["timestamp", "ip", "ciudad"]], use_container_width=True)
+if mostrar_historial:
+    consumos = list(col_consumos.find().sort("fecha", -1))
+    if consumos:
+        for idx, doc in enumerate(consumos, 1):
+            st.markdown(f"### {idx}. {doc.get('comentario', 'Sin comentario')}")
+            st.image(doc["foto_bytes"], caption=f"{doc['foto_nombre']} - {doc['ciudad']}", width=300)
+            fecha_str = doc["fecha"]
+            if isinstance(fecha_str, str):
+                fecha_str = parse(fecha_str)
+            fecha_local = fecha_str.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
+            st.markdown(f"📅 {fecha_local}")
+            borrar = st.button(f"🗑 Eliminar este registro", key=str(doc["_id"]))
+            if borrar:
+                col_consumos.delete_one({"_id": ObjectId(doc["_id"])})
+                st.warning("Registro eliminado.")
+                st.experimental_rerun()
+    else:
+        st.info("🔍 No hay consumos registrados aún.")
 else:
-    st.info("No hay ingresos registrados aún.")
+    st.caption("☝🏽 Marca la casilla si quieres ver el historial completo.")
 
 # === FORMULARIO DE REGISTRO ===
 st.markdown("## 🍭 Nuevo consumo de azúcar")

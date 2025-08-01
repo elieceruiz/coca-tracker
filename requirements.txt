@@ -4,3 +4,4 @@ requests
 pandas
 pytz
 streamlit-javascript
+python-dateutil

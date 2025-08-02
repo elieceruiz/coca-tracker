@@ -1,7 +1,5 @@
 streamlit
 pymongo
-requests
-pandas
 pytz
 streamlit-javascript
 python-dateutil

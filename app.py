@@ -1,107 +1,91 @@
-# 🍬 Registro de Azúcar – App Streamlit
-
 import streamlit as st
 from datetime import datetime
 import pytz
 import time
-import pandas as pd
 from pymongo import MongoClient
-from dateutil.relativedelta import relativedelta
+from streamlit_javascript import st_javascript
+from dateutil.parser import parse
 from bson.objectid import ObjectId
 
-# === CONFIG ===
-st.set_page_config("🍬 Registro de Azúcar", layout="centered")
+# === CONFIGURACIÓN ===
+st.set_page_config(page_title="📸 Registro de Azúcar", layout="wide")
 st.title("📸 Registro de Azúcar")
 tz = pytz.timezone("America/Bogota")
 
 # === CONEXIÓN A MONGO ===
 client = MongoClient(st.secrets["mongo_uri"])
-db = client["coca_tracker"]
-col = db["ingresos"]
-
-# === FUNCIONES ===
-def obtener_ultimo_consumo():
-    ultimo = col.find_one(sort=[("timestamp", -1)])
-    return ultimo["timestamp"] if ultimo else None
-
-def formatear_diferencia(t1, t2):
-    delta = relativedelta(t1, t2)
-    return f"{delta.years}a {delta.months}m {delta.days}d {delta.hours:02}:{delta.minutes:02}:{delta.seconds:02}"
-
-def mostrar_cronometro():
-    st.markdown("""
-    <style>
-    @keyframes pulse {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.01); }
-        100% { transform: scale(1); }
-    }
-    .cronometro {
-        font-size: 2em;
-        padding: 1em;
-        margin-top: 1em;
-        border: 1px solid #555;
-        border-radius: 16px;
-        text-align: center;
-        background-color: #222846;
-        color: #fff;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        animation: pulse 2s infinite;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    placeholder = st.empty()
-    while True:
-        now = datetime.now(tz)
-        ultimo = obtener_ultimo_consumo()
-        if ultimo:
-            ultimo = ultimo.astimezone(tz)
-            texto = formatear_diferencia(now, ultimo)
-        else:
-            texto = "Sin registros previos"
-        placeholder.markdown(f'<div class="cronometro">⏳ {texto}</div>', unsafe_allow_html=True)
-        time.sleep(1)
+db = client["registro_azucar"]
+col_consumos = db["consumos"]
 
 # === MENÚ LATERAL ===
-st.sidebar.title("📂 Menú")
-opcion = st.sidebar.radio("Selecciona una opción:", ["📥 Registrar consumo", "📑 Ver historial"])
-vista = "registro" if "Registrar" in opcion else "historial"
+st.sidebar.markdown("## 📂 Menú")
+if st.sidebar.button("📥 Registrar consumo"):
+    st.session_state["menu"] = "registro"
+if st.sidebar.button("🧾 Ver historial"):
+    st.session_state["menu"] = "historial"
+if "menu" not in st.session_state:
+    st.session_state["menu"] = "registro"
 
-# === LÓGICA DE VISTA ===
-if vista == "registro":
-    st.subheader("🔍 Nuevo consumo de azúcar")
+# === VISTA: REGISTRO ===
+if st.session_state["menu"] == "registro":
+    st.subheader("🍭 Nuevo consumo de azúcar")
+    foto = st.file_uploader("📷 Sube una foto del producto", type=["jpg", "jpeg", "png"])
+    comentario = st.text_input("📝 Comentario (opcional)")
 
-    archivo = st.file_uploader("📷 Sube una foto del producto", type=["jpg", "jpeg", "png"], label_visibility="visible")
-    comentario = st.text_input("📜 Comentario (opcional)", max_chars=200)
+    if st.button("💀 Registrar consumo"):
+        if foto:
+            col_consumos.insert_one({
+                "fecha": datetime.now(pytz.utc),
+                "comentario": comentario,
+                "foto_nombre": foto.name,
+                "foto_bytes": foto.getvalue()
+            })
+            st.success("☠️ Consumo registrado")
+            st.balloons()
+            st.rerun()
+        else:
+            st.error("⚠️ Debes subir una foto para registrar el consumo.")
 
-    if st.button("📅 Registrar consumo"):
-        now = datetime.now(tz)
-        doc = {"timestamp": now, "comentario": comentario}
-        if archivo:
-            doc["foto"] = archivo.read()
-        col.insert_one(doc)
-        st.success("¡Consumo registrado!")
+    # === CRONÓMETRO Y PROGRESO ===
+    ultimo = col_consumos.find_one(sort=[("fecha", -1)])
+    if ultimo:
+        fecha_ultima = ultimo["fecha"]
+        if isinstance(fecha_ultima, str):
+            fecha_ultima = parse(fecha_ultima)
+        if fecha_ultima.tzinfo is None:
+            fecha_ultima = pytz.utc.localize(fecha_ultima)
+
+        ahora = datetime.now(pytz.utc)
+        delta = ahora - fecha_ultima
+        total_segundos = int(delta.total_seconds())
+        horas = total_segundos // 3600
+        minutos = (total_segundos % 3600) // 60
+        segundos = total_segundos % 60
+        st.metric("⏳ Tiempo desde el último consumo", f"{horas:02}:{minutos:02}:{segundos:02}")
+        time.sleep(1)
         st.rerun()
 
-    mostrar_cronometro()
+        dias = delta.total_seconds() / 86400
+        progreso = min(dias / 21, 1.0)
+        st.progress(progreso, text=f"🌱 Hacia 21 días sin consumir: {dias:.1f} días")
 
-elif vista == "historial":
-    st.subheader("📁 Historial de consumos")
-    data = list(col.find().sort("timestamp", -1))
+# === VISTA: HISTORIAL ===
+elif st.session_state["menu"] == "historial":
+    st.subheader("📷 Historial de consumos")
+    consumos = list(col_consumos.find().sort("fecha", -1))
+    if consumos:
+        for idx, doc in enumerate(consumos, 1):
+            comentario = doc.get("comentario", "Sin comentario")
+            fecha = doc["fecha"]
+            if isinstance(fecha, str):
+                fecha = parse(fecha)
+            fecha_local = fecha.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
 
-    for i, item in enumerate(data):
-        with st.container():
-            st.markdown("---")
-            col1, col2 = st.columns([4, 1])
-            with col1:
-                fecha = item["timestamp"].astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
-                st.markdown(f"🕒 **{fecha}**")
-                if "comentario" in item and item["comentario"]:
-                    st.markdown(f"📜 _{item['comentario']}_")
-            with col2:
-                if st.button("🗑️", key=f"del_{i}"):
-                    col.delete_one({"_id": item["_id"]})
+            with st.expander(f"{idx}. {comentario} – {fecha_local}"):
+                st.image(doc["foto_bytes"], caption=doc["foto_nombre"], width=300)
+                if st.button("🗑 Eliminar", key=str(doc["_id"])):
+                    col_consumos.delete_one({"_id": ObjectId(doc["_id"])})
+                    st.warning("Registro eliminado.")
                     st.rerun()
-            if "foto" in item:
-                st.image(item["foto"], use_column_width=True)
+    else:
+        st.info("No hay consumos registrados aún.")

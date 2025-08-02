@@ -1,5 +1,5 @@
 streamlit
 pymongo
-pytz
-streamlit-javascript
 python-dateutil
+pytz
+pandas
